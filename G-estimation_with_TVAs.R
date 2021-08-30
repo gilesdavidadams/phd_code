@@ -1,4 +1,5 @@
 # Testing GIT
+# Testing GIT 
 
 rm(list=ls())
 gc()
@@ -216,7 +217,7 @@ newton_raphson_psi <- function(df, t_df,
       }
     }
     
-    t_df_psi <- t_df %>% filter( .$psi_counter <= psi_choose)
+    t_df_psi <- t_df %>% filter( .$psi_counter == psi_choose)
     for(a_curr in t_df_psi$a_val){
       for(i in 1:nrow(t_df_psi)){
         a_dash <- t_df_psi$a_val[[i]]
@@ -253,7 +254,7 @@ newton_raphson_psi <- function(df, t_df,
   return(list(psi_hat, steps, fail_flag))
 }
 
-#######################################################################
+
 newton_raphson_iterative <- function(df, t_df, 
                                      psi_init=rep(0, length(t_psi_vec)),
                                      tol=0.001, max_iter=20){
@@ -292,7 +293,101 @@ newton_raphson_iterative <- function(df, t_df,
 }
 
 
-#######################################################################
+construct_jacobian <- function(df, t_df, psi_hat){
+  
+  jacobi_vec <- c()
+  
+  for(i in 0:(length(psi_hat)-1)){
+    for(j in 0:(length(psi_hat)-1)){
+      denom <- 0
+      
+      psi_choose <- i
+      t_df_psi <- t_df %>% filter( .$psi_counter == psi_choose)
+      t_df_a <- t_df %>% filter(.$a_val %in% t_df_psi$a_val)
+      
+      for(a_curr in t_df_a$a_val){
+        for(v in 1:nrow(t_df_a)){
+          a_dash <- t_df_a$a_val[[v]]
+          psi_dash <- t_df_a$psi_counter[[v]]
+          
+          if((a_dash >= a_curr) & (psi_dash == j)){
+            df_temp <- calculate_tau_rsd(df, t_df=t_df,
+                                         psi_hat=psi_hat,
+                                         a_k=a_dash, psi_k=psi_dash)
+            
+            names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
+            names(df_temp)[names(df_temp)==paste0("a_", a_dash)] <- "a_dish"
+            names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
+            
+            if(a_dash == a_curr){
+              denom <- denom + with(df_temp, sum((a_k-fit_k)*a_k*tau_rsd))
+            } else {
+              denom <- denom + with(df_temp, sum((a_k-fit_k)*a_dish*tau_rsd))
+            }
+          }
+        }
+      }
+      
+      jacobi_vec <- c(jacobi_vec, denom)
+      
+    }
+  }
+  
+  return(matrix(jacobi_vec, byrow=T, nrow=length(t_psi_vec)))
+  
+}
+
+
+
+newton_raphson_grad <- function(df, t_df,
+                                psi_start=rep(0, length(t_psi_vec)), 
+                                tol=0.001, max_iter=20, psi_max = 10){
+  
+  psi_hat <- psi_start
+  psi_old <- psi_hat
+  steps <- 1L
+  fail_flag <- F
+  
+  while(((sum(abs(psi_hat - psi_old)) > tol) | steps == 1) &
+        (steps <= max_iter) & (max(abs(psi_hat)) < psi_max)){
+    
+    psi_old <- psi_hat
+    
+    S_vec <- sapply(0:(length(t_psi_vec)-1), function(psi_choose){
+      num <- 0
+      a_check <- -1
+      for(i in 1:nrow(t_df)){
+        if(t_df$psi_counter[[i]] == psi_choose){
+          a_curr <- t_df$a_val[[i]]
+          if (a_check < a_curr){
+            df_temp <- calculate_tau_k(df, psi_hat=psi_hat, t_df=t_df, 
+                                       a_k=a_curr)
+            
+            names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
+            names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
+            
+            num <- num + with(df_temp, sum((a_k-fit_k)*tau_k))
+          }
+          a_check <- a_curr
+        }
+      }
+      return(num)
+    })
+    
+    J <- construct_jacobian(df, t_df=t_df, psi_hat=psi_hat)
+    psi_hat <- solve(J, S_vec) + psi_hat
+    steps <- steps + 1
+  }
+  
+  if (max(abs(psi_hat)) >= psi_max){
+    fail_flag <- T
+  }
+  return(list(psi_hat, steps, fail_flag))
+}
+  
+
+
+
 calculate_variance <- function(df, psi_hat, t_a_vec, t_psi_vec, t_df){
   
   D_vec <- c()
@@ -418,11 +513,11 @@ t0_max <- 100
 psi_star <- c(log(2), log(1.5))
 #psi_star <- c(log(1.8), log(1.5), log(2))
 
-t_a_vec   <- c(0, 50)
-t_psi_vec <- c(0, 50)
+t_a_vec   <- c(0, 40)
+t_psi_vec <- c(0, 30)
 t_df <- get_time_df(t_a_vec, t_psi_vec)
 
-sims <- 200
+sims <- 100
 
 
 
@@ -446,9 +541,11 @@ nr_out <- foreach(i=c(1:sims),
           df <- df %>% fit_treatment_models(t_a_vec=t_a_vec, 
                                             t_psi_vec=t_psi_vec)
           
-          nri_out <- newton_raphson_iterative(df, t_df=t_df)
+          #nri_out <- newton_raphson_iterative(df, t_df=t_df)
+          nri_out <- newton_raphson_grad(df, t_df=t_df)
           psi_hat <- nri_out[[1]]
-          fail_check <- nri_out[[4]]
+          fail_check <- nri_out[[3]]
+          #fail_check <- nri_out[[4]]
           
           VCV <- calculate_variance(df=df, psi_hat=psi_hat,
                                     t_a_vec=t_a_vec, t_psi_vec=t_psi_vec,
