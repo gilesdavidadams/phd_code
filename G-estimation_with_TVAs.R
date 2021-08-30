@@ -15,8 +15,9 @@ registerDoParallel()
 
 
 ### DATASET CREATION / PRELIMINARY DATA WRANGLING ###
-create_sample <- function(t_df, psi_star){
+create_sample <- function(t_df, psi_star_CT, psi_star_TOT){
   
+  # creates treatment variables
   a_0 <- c(rep(0, floor(n/2)), rep(1, n - floor(n/2)))
   df <- tibble(a_0)
   if (max(t_df$a_val) > 0) {
@@ -27,39 +28,58 @@ create_sample <- function(t_df, psi_star){
     }
   }
   
+  # generates T0 times
   df <- df %>% add_column(t0  = runif(n, min=t0_min, max=t0_max )) %>%
     mutate(ti = 0, t0_rsd = t0)
   
-  for(i in 1:nrow(t_df)){
-    time_row <- t_df[i,]
+  # pre-fills TOT variables
+  df <- df %>% add_column(w_TOT = rep(0,n))
+  for(i in 0:length(TOT_times_vec)){
+    df <- df %>% add_column(w_m = rep(0,n))
+    names(df)[names(df)=="w_m"] <- paste0("w_m",i)
+  }
+  
+  
+  
+  for(m in 0:(nrow(t_df)-1)){
+    time_row <- t_df[m+1,]
     t_curr <- time_row$t
     a_curr <- time_row$a_val
     psi_curr <- time_row$psi_counter
     
     a_vec <- df[[paste("a_", a_curr, sep="")]]
-    psi_val <- psi_star[[psi_curr+1]]
+    psi_val_CT <- psi_star_CT[[psi_curr+1]]
     
-    if(i == nrow(t_df)){
+    if(m == (nrow(t_df)-1)){
       t_max <- Inf
     } else {
-      t_max <- t_df[i+1,]$t
+      t_max <- t_df[m+1,]$t_next
     }
+
+    names(df)[names(df)==paste0("w_m",m)] <- "w_m_curr"
+
     df <- df %>% mutate(
-      temp = pmin((t_max - t_curr)*exp(-psi_val*a_vec), t0_rsd),
-      ti = ti + temp*exp(psi_val*a_vec),
-      t0_rsd = t0_rsd - temp)
+      w_m_curr = sapply(w_TOT, function(q){sum(q >= xi_vec) - 1}),
+      g_psi = psi_val_CT + rowSums(sapply(1:(length(psi_star_TOT)-1),
+                                        function(q){
+                                          psi_star_TOT[[q+1]]*(w_m_curr >= q)
+                                        })),
+      temp = pmin((t_max - t_curr)*exp(-g_psi*a_vec), t0_rsd),
+      ti = ti + temp*exp(g_psi*a_vec),
+      t0_rsd = t0_rsd - temp,
+      w_TOT = w_TOT + a_vec*(t_max - t_curr)
+      )
+    
+    names(df)[names(df)=="w_m_curr"] <- paste0("w_m", m)
   }
   
-  return(select(df, -c(t0_rsd, temp)))
+  return(select(df, -c(t0_rsd, temp, w_TOT)))
 }
 
 
-
-
-
-get_time_df <- function(t_a_vec, t_psi_vec, ...){
+get_time_df <- function(t_a_vec, t_psi_vec, TOT_times_vec, ...){
   
-  times_vec <- sort(unique(c(t_a_vec, t_psi_vec)))
+  times_vec <- sort(unique(c(t_psi_vec, TOT_times_vec)))
   time_df <- tibble(t=numeric(), t_next=numeric(),
                     a_val=integer(), psi_counter=integer())
   for(i in 1:length(times_vec)){
@@ -504,18 +524,33 @@ calculate_variance <- function(df, psi_hat, t_a_vec, t_psi_vec, t_df){
 ### MAIN # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-n <- 500
+n <- 12
 #lambda <- 50^-1
 t0_min <- 10
 t0_max <- 100 
 
+# PSI's for no TOT dependency
 #psi_star <- c(log(2))
-psi_star <- c(log(2), log(1.5))
 #psi_star <- c(log(1.8), log(1.5), log(2))
+#psi_star <- c(log(1.8), log(1.5), log(2))
+
+#PSI's when CT and TOT dependency (should also work in general)
+psi_star_CT <- c(log(2), log(1.5))
+#psi_star_CT <- c(log(2))
+
+#PSI's for TOT dependency. 
+# NOTE: 1st element must be zero.
+# AND the treatment effect is the cumulative sum
+psi_star_TOT <- c(0, log(1.2), log(0.3))
+
+
 
 t_a_vec   <- c(0, 40)
 t_psi_vec <- c(0, 30)
-t_df <- get_time_df(t_a_vec, t_psi_vec)
+xi_vec <- c(0, 5, 20)
+
+TOT_times_vec <- sort(unique(as.vector(sapply(xi_vec, function(q){t_a_vec + q}))))
+t_df <- get_time_df(t_a_vec, t_psi_vec, TOT_times_vec)
 
 sims <- 100
 
@@ -537,7 +572,7 @@ nr_out <- foreach(i=c(1:sims),
     while(!isTRUE(output_check)){
       nr_sim <- tryCatch(
         expr = {
-          df <- create_sample(t_df, psi_star=psi_star)
+          df <- create_sample(t_df, psi_star_CT=psi_star_CT)
           df <- df %>% fit_treatment_models(t_a_vec=t_a_vec, 
                                             t_psi_vec=t_psi_vec)
           
