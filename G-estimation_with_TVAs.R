@@ -15,7 +15,10 @@ registerDoParallel()
 
 
 ### DATASET CREATION / PRELIMINARY DATA WRANGLING ###
-create_sample <- function(t_df, psi_star_CT, psi_star_TOT){
+create_sample <- function(t_df, psi_star_list){
+  
+  psi_star_CT <- psi_star_list[[1]]
+  psi_star_TOT <- psi_star_list[[2]]
   
   # creates treatment variables
   a_0 <- c(rep(0, floor(n/2)), rep(1, n - floor(n/2)))
@@ -40,14 +43,15 @@ create_sample <- function(t_df, psi_star_CT, psi_star_TOT){
   }
   
   
-  
+  # Creates a variable "w_m{}" for each sub-period m
+  # that records the index of the highest TOT psi activated
+  # by the individual
   for(m in 0:(nrow(t_df)-1)){
     time_row <- t_df[m+1,]
     t_curr <- time_row$t
     a_curr <- time_row$a_val
     psi_curr <- time_row$psi_counter
-    
-    a_vec <- df[[paste("a_", a_curr, sep="")]]
+
     psi_val_CT <- psi_star_CT[[psi_curr+1]]
     
     if(m == (nrow(t_df)-1)){
@@ -55,25 +59,27 @@ create_sample <- function(t_df, psi_star_CT, psi_star_TOT){
     } else {
       t_max <- t_df[m+1,]$t_next
     }
-
+    
     names(df)[names(df)==paste0("w_m",m)] <- "w_m_curr"
-
+    names(df)[names(df)==paste0("a_", a_curr)] <- "a_vec"
+    
     df <- df %>% mutate(
       w_m_curr = sapply(w_TOT, function(q){sum(q >= xi_vec) - 1}),
-      g_psi = psi_val_CT + rowSums(sapply(1:(length(psi_star_TOT)-1),
-                                        function(q){
-                                          psi_star_TOT[[q+1]]*(w_m_curr >= q)
-                                        })),
+      g_psi = psi_val_CT + rowSums(sapply(0:(length(psi_star_TOT)-1),
+                                          function(q){
+                                            psi_star_TOT[[q+1]]*(w_m_curr >= q)
+                                          })),
       temp = pmin((t_max - t_curr)*exp(-g_psi*a_vec), t0_rsd),
       ti = ti + temp*exp(g_psi*a_vec),
       t0_rsd = t0_rsd - temp,
       w_TOT = w_TOT + a_vec*(t_max - t_curr)
-      )
+    )
     
     names(df)[names(df)=="w_m_curr"] <- paste0("w_m", m)
+    names(df)[names(df)=="a_vec"] <- paste0("a_", a_curr) 
   }
   
-  return(select(df, -c(t0_rsd, temp, w_TOT)))
+  return(select(df, -c(t0_rsd, temp, w_TOT, g_psi)))
 }
 
 
@@ -99,20 +105,50 @@ get_time_df <- function(t_a_vec, t_psi_vec, TOT_times_vec, ...){
   return(time_df)
 }
 
-fit_treatment_models <- function(df, t_a_vec, t_psi_vec){
+create_m_k_map <- function(t_df){
+  a_val_curr <- 0
+  m_k_map <- c(0)
+  for (i in 1:nrow(t_df)){
+    time_row <- t_df[i,]
+    if (time_row$a_val > a_val_curr){
+      m_k_map <- c(m_k_map, i-1)
+      a_val_curr <- time_row$a_val
+    }
+  }
+  return(m_k_map)
+}
+
+
+fit_treatment_models <- function(df, t_a_vec, t_psi_vec, xi_vec = c(0)){
   
   df <- df %>% mutate(fit_0 = glm(a_0 ~ 1, family=binomial)$fitted.values)
   
-  if (length(t_a_vec)-1 > 0){
-    for(i in 1:(length(t_a_vec)-1)){
+  if (length(t_a_vec)-1 > 0) {
+    for(i in 1:(length(t_a_vec)-1)) {
+      #     mdl_formula <- paste0("a_", i, "~",
+      #                                      paste0("a_", 0:(i-1), collapse="+"))
+      #     if (length(xi_vec) > 1) {
+      #       mdl_formula <- paste0(mdl_formula, "+", paste0("w", 0:(length(xi_vec)-1), collapse="+"))
+      #       
+      #       subperiod_index <- sum((t_df$a_val < i))
+      #       names(df)[names(df) == paste0("w_m", subperiod_index)] <- "w_compare"
+      #       for (j in 0:(length(xi_vec)-1)){
+      #         df <- df %>% mutate(w_curr = as.integer((j <= w_compare)))
+      #         names(df)[names(df) == "w_curr"] <- paste0("w", j)
+      #       }
+      #       names(df)[names(df) == "w_compare"] <- paste0("w_m", subperiod_index)
+      #     }
+      
+      mdl_formula <- paste0("a_", i, "~",
+                            paste0("a_", 0:(i-1), collapse="+"))
       model_temp <- with(df %>% filter(.$ti > t_a_vec[[i+1]]), 
-                         glm(as.formula(paste0("a_", i, "~",
-                                               paste0("a_", 0:(i-1), collapse="+"))),
-                             family=binomial))
+                         glm(  as.formula(mdl_formula),
+                               family=binomial))
       df$fit_temp <- predict(model_temp, newdata = df, type="response")
       names(df)[names(df) == "fit_temp"] <- paste0("fit_", i)
     }
   }
+  
   
   return(df)
 }
@@ -120,58 +156,87 @@ fit_treatment_models <- function(df, t_a_vec, t_psi_vec){
 
 
 ### AFT CALCULATIONS ###
-calculate_tau_k <- function(df, psi_hat, t_df, a_k=0, ...){
+calculate_tau_k <- function(df, t_df, psi_hat_list,  a_k=0, ...){
   #by default calculates tau(0) aka T0 from trial start
+  
+  psi_hat_CT <- psi_hat_list[[1]]
+  psi_hat_TOT <- psi_hat_list[[2]]
+  
   t_a <- t_a_vec[[a_k+1]]
   
-  t_df <- t_df %>%
+  t_df_k <- t_df %>%
     filter(.$t >= t_a)
   
   df <- df %>% filter(.$ti > t_a)%>% 
     mutate(ti_rsd = ti - t_a,
            tau_k = 0)
   
-  for(i in 1:nrow(t_df)){
-    time_row <- t_df[i,]
+  for(i in 1:nrow(t_df_k)){
+    time_row <- t_df_k[i,]
     t_curr <- time_row$t
     t_max <- time_row$t_next
     a_curr <- time_row$a_val
     psi_curr <- time_row$psi_counter
     
-    a_vec <- df[[paste("a_", a_curr, sep="")]]
-    psi_val <- psi_hat[[psi_curr+1]]
+    psi_val_CT <- psi_hat_CT[[psi_curr+1]]
+    
+    m_val <- sum((t_df$t <= t_curr))-1
+    
+    names(df)[names(df)==paste0("w_m", m_val)] <- "w_m_curr"
+    names(df)[names(df)==paste0("a_", a_curr)] <- "a_k"
     
     df <- df %>% mutate(
+      g_psi = psi_val_CT + 
+              rowSums(sapply(0:(length(psi_hat_TOT)-1),
+                    function(q){
+                              psi_hat_TOT[[q+1]]*(w_m_curr >= q)
+                          })),
       temp = pmin(t_max - t_curr, ti_rsd),
-      tau_k = tau_k + temp*exp(-psi_val*a_vec),
+      tau_k = tau_k + temp*exp(-g_psi*a_k),
       ti_rsd = ti_rsd - temp
     )
+    
+    names(df)[names(df)=="w_m_curr"] <- paste0("w_m", m_val)
+    names(df)[names(df)=="a_k"] <- paste0("a_", a_curr)
   }
   return(df)
   #return(select(df, -c(temp, ti_rsd)))
 }
 
-calculate_tau_rsd <- function(df, t_df, psi_hat, 
+calculate_tau_rsd <- function(df, t_df, psi_hat_list, 
                               a_k=0, psi_k=0, ...){
   #by default calculates tau(0) aka T0 from trial start
-  t_df <- t_df %>%
+  
+  psi_hat_CT <- psi_hat_list[[1]]
+  psi_hat_TOT <- psi_hat_list[[2]]
+  
+  time_row_df <- t_df %>%
     filter(.$a_val == a_k & .$psi_counter == psi_k)
   
-  t_curr <- t_df$t[[1]]
-  t_max <- t_df$t_next[[1]]
+  t_curr <- time_row_df$t[[1]]
+  t_max <- time_row_df$t_next[[1]]
   
+  psi_val_CT <- psi_hat_CT[[psi_curr+1]]
+  m_val <- sum((t_df$t <= t_curr))-1
+  
+  names(df)[names(df)==paste0("w_m", m_val)] <- "w_m_curr"
   names(df)[names(df)==paste0("a_", a_k)] <- "a_k"
-  psi_val <- psi_hat[[psi_k+1]]
-  
   
   df <- df %>% mutate(
+    g_psi = psi_val_CT + 
+      rowSums(sapply(0:(length(psi_hat_TOT)-1),
+                     function(q){
+                       psi_hat_TOT[[q+1]]*(w_m_curr >= q)
+                     })),
     temp = pmax(0, pmin(t_max, ti) - t_curr),
-    tau_rsd = temp*exp(-psi_val*a_k)
+    tau_rsd = temp*exp(-g_psi*a_k)
   )
-  names(df)[names(df)=="a_k"] <- paste0("a_", a_k)
+
+  names(df)[names(df)=="w_m_curr"] <- paste0("w_m", m_val)
+  names(df)[names(df)=="a_k"] <- paste0("a_", a_curr)
   
-  return(df)
-  #return(select(df, -c(temp)))
+  #return(df)
+  return(select(df, -c(temp, g_psi)))
 }
 
 calculate_dtau_dpsi <- function(df, t_df, psi_hat, 
@@ -200,9 +265,9 @@ calculate_dtau_dpsi <- function(df, t_df, psi_hat,
 
 
 
-#######################################################################
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 ### ESTIMATION ###
-#######################################################################
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 newton_raphson_psi <- function(df, t_df,
                                psi_start, psi_choose=0, 
                                tol=0.001, max_iter=20, psi_max = 10){
@@ -313,10 +378,19 @@ newton_raphson_iterative <- function(df, t_df,
 }
 
 
-construct_jacobian <- function(df, t_df, psi_hat){
+construct_jacobian <- function(df, t_df, psi_hat_list){
+  
+  psi_hat_CT <- psi_hat_list[[1]]
+  psi_hat_TOT <- psi_hat_list[[2]]
   
   jacobi_vec <- c()
   
+  jacobi_dim <- length(psi_hat_CT) + (length(psi_hat_TOT)-1)
+  
+  for (row_counter in 1:jacobi_dim){
+    if (row_counter <= length(psi_hat_CT){
+      i <- row_counter
+    }
   for(i in 0:(length(psi_hat)-1)){
     for(j in 0:(length(psi_hat)-1)){
       denom <- 0
@@ -404,7 +478,7 @@ newton_raphson_grad <- function(df, t_df,
   }
   return(list(psi_hat, steps, fail_flag))
 }
-  
+
 
 
 
@@ -524,7 +598,7 @@ calculate_variance <- function(df, psi_hat, t_a_vec, t_psi_vec, t_df){
 ### MAIN # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-n <- 12
+n <- 100
 #lambda <- 50^-1
 t0_min <- 10
 t0_max <- 100 
@@ -541,16 +615,34 @@ psi_star_CT <- c(log(2), log(1.5))
 #PSI's for TOT dependency. 
 # NOTE: 1st element must be zero.
 # AND the treatment effect is the cumulative sum
-psi_star_TOT <- c(0, log(1.2), log(0.3))
 
+#psi_star_TOT <- c(0)
+#xi_vec <- c(0)
+psi_star_TOT <- c(0, log(1.2))
+xi_vec <- c(0, 20)
+#psi_star_TOT <- c(0, log(1.2), log(0.3))
+#xi_vec <- c(0, 5, 20)
 
+psi_star_list <- list(psi_star_CT, psi_star_TOT)
 
 t_a_vec   <- c(0, 40)
 t_psi_vec <- c(0, 30)
-xi_vec <- c(0, 5, 20)
+
 
 TOT_times_vec <- sort(unique(as.vector(sapply(xi_vec, function(q){t_a_vec + q}))))
 t_df <- get_time_df(t_a_vec, t_psi_vec, TOT_times_vec)
+
+
+df <- create_sample(t_df, psi_star_list=psi_star_list)
+df <- df %>% fit_treatment_models(t_a_vec=t_a_vec, 
+                                  t_psi_vec=t_psi_vec,
+                                  xi_vec=xi_vec)
+
+
+
+
+
+
 
 sims <- 100
 
