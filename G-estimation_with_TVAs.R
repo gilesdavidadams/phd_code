@@ -51,7 +51,7 @@ create_sample <- function(t_df, psi_star_list){
     t_curr <- time_row$t
     a_curr <- time_row$a_val
     psi_curr <- time_row$psi_counter
-
+    
     psi_val_CT <- psi_star_CT[[psi_curr+1]]
     
     if(m == (nrow(t_df)-1)){
@@ -187,10 +187,10 @@ calculate_tau_k <- function(df, t_df, psi_hat_list,  a_k=0, ...){
     
     df <- df %>% mutate(
       g_psi = psi_val_CT + 
-              rowSums(sapply(0:(length(psi_hat_TOT)-1),
-                    function(q){
-                              psi_hat_TOT[[q+1]]*(w_m_curr >= q)
-                          })),
+        rowSums(sapply(0:(length(psi_hat_TOT)-1),
+                       function(q){
+                         psi_hat_TOT[[q+1]]*(w_m_curr >= q)
+                       })),
       temp = pmin(t_max - t_curr, ti_rsd),
       tau_k = tau_k + temp*exp(-g_psi*a_k),
       ti_rsd = ti_rsd - temp
@@ -231,9 +231,45 @@ calculate_tau_rsd <- function(df, t_df, psi_hat_list,
     temp = pmax(0, pmin(t_max, ti) - t_curr),
     tau_rsd = temp*exp(-g_psi*a_k)
   )
-
+  
   names(df)[names(df)=="w_m_curr"] <- paste0("w_m", m_val)
   names(df)[names(df)=="a_k"] <- paste0("a_", a_curr)
+  
+  #return(df)
+  return(select(df, -c(temp, g_psi)))
+}
+
+calculate_tau_rsd_m <- function(df, t_df, psi_hat_list, 
+                                m=0, ...){
+  #by default calculates tau(0) aka T0 from trial start
+  
+  psi_hat_CT <- psi_hat_list[[1]]
+  psi_hat_TOT <- psi_hat_list[[2]]
+  
+  time_row_df <- t_df[m+1,]
+  
+  t_curr <- time_row_df$t
+  t_max <- time_row_df$t_next
+  a_k <- time_row_df$a_val
+  psi_curr <- time_row_df$psi_counter
+  
+  psi_val_CT <- psi_hat_CT[[psi_curr+1]]
+  
+  names(df)[names(df)==paste0("w_m", m)] <- "w_m_curr"
+  names(df)[names(df)==paste0("a_", a_k)] <- "a_k"
+  
+  df <- df %>% mutate(
+    g_psi = psi_val_CT + 
+      rowSums(sapply(0:(length(psi_hat_TOT)-1),
+                     function(q){
+                       psi_hat_TOT[[q+1]]*(w_m_curr >= q)
+                     })),
+    temp = pmax(0, pmin(t_max, ti) - t_curr),
+    tau_rsd = temp*exp(-g_psi*a_k)
+  )
+  
+  names(df)[names(df)=="w_m_curr"] <- paste0("w_m", m)
+  names(df)[names(df)=="a_k"] <- paste0("a_", a_k)
   
   #return(df)
   return(select(df, -c(temp, g_psi)))
@@ -388,46 +424,173 @@ construct_jacobian <- function(df, t_df, psi_hat_list){
   jacobi_dim <- length(psi_hat_CT) + (length(psi_hat_TOT)-1)
   
   for (row_counter in 1:jacobi_dim){
-    if (row_counter <= length(psi_hat_CT){
-      i <- row_counter
-    }
-  for(i in 0:(length(psi_hat)-1)){
-    for(j in 0:(length(psi_hat)-1)){
+    for (col_counter in 1:jacobi_dim){
+      
       denom <- 0
       
-      psi_choose <- i
-      t_df_psi <- t_df %>% filter( .$psi_counter == psi_choose)
-      t_df_a <- t_df %>% filter(.$a_val %in% t_df_psi$a_val)
+      #dCT/dCT
+      if ((row_counter <= length(psi_hat_CT))
+          && (col_counter <= length(psi_hat_CT))){
+        i <- row_counter - 1
+        j <- col_counter - 1
+        
+        psi_choose <- i
+        t_df_psi <- t_df %>% filter( .$psi_counter == psi_choose)
+        t_df_a <- t_df %>% filter(.$a_val %in% t_df_psi$a_val)
+        
+        for(a_curr in t_df_a$a_val){
+          for(m in 0:(nrow(t_df)-1)){
+            if (t_df$a_val[[m+1]] %in% t_df_psi$a_val){
+              a_dash <- t_df_a$a_val[[m+1]]
+              psi_dash <- t_df_a$psi_counter[[m+1]]
+              
+              if((a_dash >= a_curr) & (psi_dash == j)){
+                df_temp <- calculate_tau_rsd_m(df, t_df=t_df,
+                                               psi_hat_list=psi_hat_list,
+                                               m=m)
+                
+                names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
+                names(df_temp)[names(df_temp)==paste0("a_", a_dash)] <- "a_dish"
+                names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
+                
+                if(a_dash == a_curr){
+                  denom <- denom + with(df_temp, sum((a_k-fit_k)*a_k*tau_rsd))
+                } else {
+                  denom <- denom + with(df_temp, sum((a_k-fit_k)*a_dish*tau_rsd))
+                }
+              }
+            }
+          }
+        }
+      }
       
-      for(a_curr in t_df_a$a_val){
-        for(v in 1:nrow(t_df_a)){
-          a_dash <- t_df_a$a_val[[v]]
-          psi_dash <- t_df_a$psi_counter[[v]]
-          
-          if((a_dash >= a_curr) & (psi_dash == j)){
-            df_temp <- calculate_tau_rsd(df, t_df=t_df,
-                                         psi_hat=psi_hat,
-                                         a_k=a_dash, psi_k=psi_dash)
+      #dCT/dTOT
+      if ((row_counter <= length(psi_hat_CT))
+          && (col_counter > length(psi_hat_CT))){
+        
+        i <- row_counter - 1
+        j <- col_counter - length(psi_hat_CT)
+        
+        psi_choose <- i
+        t_df_psi <- t_df %>% filter( .$psi_counter == psi_choose)
+        t_df_a <- t_df %>% filter(.$a_val %in% t_df_psi$a_val)
+        
+        for(a_curr in t_df_a$a_val){
+          for(m in 0:(nrow(t_df)-1)){
+            if (t_df$a_val[[m+1]] %in% t_df_psi$a_val){
+              a_dash <- t_df$a_val[[m+1]]
+              psi_dash <- t_df$psi_counter[[m+1]]
+              
+              if((a_dash >= a_curr)){
+                df_temp <- calculate_tau_rsd_m(df, t_df=t_df,
+                                               psi_hat_list=psi_hat_list,
+                                               m=m)
+                
+                names(df_temp)[names(df_temp)==paste0("w_m", m)] <- "w_m_curr"
+                df_temp <- df_temp %>% mutate(
+                  w_nu_ind = as.integer(w_m_curr >= j)
+                )
+                
+                names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
+                names(df_temp)[names(df_temp)==paste0("a_", a_dash)] <- "a_dish"
+                names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
+                
+                if(a_dash == a_curr){
+                  denom <- denom + with(df_temp, sum((a_k-fit_k)*a_k*w_nu_ind*tau_rsd))
+                } else {
+                  denom <- denom + with(df_temp, sum((a_k-fit_k)*a_dish*w_nu_ind*tau_rsd))
+                }
+              }
+            }
+          }
+        }
+        
+      }
+      
+      #dTOT/dCT
+      if ((row_counter > length(psi_hat_CT))
+          && (col_counter <= length(psi_hat_CT))){
+        
+        i <- row_counter - length(psi_hat_CT)
+        j <- col_counter - 1
+        
+        psi_choose <- j 
+        
+        for(a_curr in t_df$a_val){
+          for(m in 0:(nrow(t_df)-1)){
+            psi_dash <- t_df$psi_counter[[m+1]]
+            if (psi_dash == j){
+              a_dash <- t_df$a_val[[m+1]]
+              
+              if((a_dash >= a_curr)){
+                df_temp <- calculate_tau_rsd_m(df, t_df=t_df,
+                                               psi_hat_list=psi_hat_list,
+                                               m=m)
+                
+                names(df_temp)[names(df_temp)==paste0("w_m", m)] <- "w_m_curr"
+                df_temp <- df_temp %>% mutate(
+                  w_nu_ind = as.integer(w_m_curr >= i)
+                )
+                names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
+                names(df_temp)[names(df_temp)==paste0("a_", a_dash)] <- "a_dish"
+                names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
+                
+                if(a_dash == a_curr){
+                  denom <- denom + with(df_temp, sum((a_k-fit_k)*a_k*w_nu_ind*tau_rsd))
+                } else {
+                  denom <- denom + with(df_temp, sum((a_k-fit_k)*a_dish*w_nu_ind*tau_rsd))
+                }
+              }
+            }
+          }
+        }
+        
+      }
+      
+      #dTOT/dTOT
+      if ((row_counter > length(psi_hat_CT))
+          && (col_counter > length(psi_hat_CT))){
+        
+        i <- row_counter - length(psi_hat_CT)
+        j <- col_counter - length(psi_hat_CT)
+        
+        psi_choose <- j 
+        
+        for(a_curr in t_df$a_val){
+          for(m in 0:(nrow(t_df)-1)){
+            psi_dash <- t_df$psi_counter[[m+1]]
+            a_dash <- t_df$a_val[[m+1]]
             
-            names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
-            names(df_temp)[names(df_temp)==paste0("a_", a_dash)] <- "a_dish"
-            names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
-            
-            if(a_dash == a_curr){
-              denom <- denom + with(df_temp, sum((a_k-fit_k)*a_k*tau_rsd))
-            } else {
-              denom <- denom + with(df_temp, sum((a_k-fit_k)*a_dish*tau_rsd))
+            if((a_dash >= a_curr)){
+              df_temp <- calculate_tau_rsd_m(df, t_df=t_df,
+                                             psi_hat_list=psi_hat_list,
+                                             m=m)
+              
+              names(df_temp)[names(df_temp)==paste0("w_m", m)] <- "w_m_curr"
+              df_temp <- df_temp %>% mutate(
+                w_nu_ind_i = as.integer(w_m_curr >= i),
+                w_nu_ind_j = as.integer(w_m_curr >= j)
+              )
+              names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
+              names(df_temp)[names(df_temp)==paste0("a_", a_dash)] <- "a_dish"
+              names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
+              
+              if(a_dash == a_curr){
+                denom <- denom + with(df_temp, sum((a_k-fit_k)*a_k*w_nu_ind_i*w_nu_ind_j*tau_rsd))
+              } else {
+                denom <- denom + with(df_temp, sum((a_k-fit_k)*a_dish*w_nu_ind_i*w_nu_ind_j*tau_rsd))
+              }
             }
           }
         }
       }
       
       jacobi_vec <- c(jacobi_vec, denom)
-      
     }
   }
   
-  return(matrix(jacobi_vec, byrow=T, nrow=length(t_psi_vec)))
+  
+  return(matrix(jacobi_vec, byrow=T, nrow= (length(psi_hat_CT) + length(psi_hat_TOT) - 1)))
   
 }
 
