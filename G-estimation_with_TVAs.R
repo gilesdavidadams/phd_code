@@ -441,8 +441,8 @@ construct_jacobian <- function(df, t_df, psi_hat_list){
         for(a_curr in t_df_a$a_val){
           for(m in 0:(nrow(t_df)-1)){
             if (t_df$a_val[[m+1]] %in% t_df_psi$a_val){
-              a_dash <- t_df_a$a_val[[m+1]]
-              psi_dash <- t_df_a$psi_counter[[m+1]]
+              a_dash <- t_df$a_val[[m+1]]
+              psi_dash <- t_df$psi_counter[[m+1]]
               
               if((a_dash >= a_curr) & (psi_dash == j)){
                 df_temp <- calculate_tau_rsd_m(df, t_df=t_df,
@@ -597,20 +597,27 @@ construct_jacobian <- function(df, t_df, psi_hat_list){
 
 
 newton_raphson_grad <- function(df, t_df,
-                                psi_start=rep(0, length(t_psi_vec)), 
+                                psi_start_list=list(rep(0, length(t_psi_vec)),
+                                                    rep(0, length(xi_vec))), 
                                 tol=0.001, max_iter=20, psi_max = 10){
   
-  psi_hat <- psi_start
-  psi_old <- psi_hat
+  psi_hat_list <- psi_start_list
+  psi_hat_vec <- psi_hat_list[[1]]
+  if (length(psi_hat_list[[2]]) > 1){
+    psi_hat_vec <- c(psi_hat_vec, psi_hat_list[[2]][2:length(psi_hat_list[[2]])])
+  }
+  #psi_hat <- psi_start
+  psi_old_list <- psi_hat_list
   steps <- 1L
   fail_flag <- F
   
-  while(((sum(abs(psi_hat - psi_old)) > tol) | steps == 1) &
-        (steps <= max_iter) & (max(abs(psi_hat)) < psi_max)){
+  while(((sum(abs(unlist(psi_hat_list) - unlist(psi_old_list))) > tol) | steps == 1) &
+        (steps <= max_iter) & (max(abs(unlist(psi_hat_list))) < psi_max)){
     
-    psi_old <- psi_hat
+    psi_old_list <- psi_hat_list
     
-    S_vec <- sapply(0:(length(t_psi_vec)-1), function(psi_choose){
+    #CT varying component
+    S_CT <- sapply(0:(length(t_psi_vec)-1), function(psi_choose){
       num <- 0
       a_check <- -1
       for(i in 1:nrow(t_df)){
@@ -629,7 +636,37 @@ newton_raphson_grad <- function(df, t_df,
         }
       }
       return(num)
-    })
+    }) 
+    
+    #TOT varying component
+    if (length(xi_vec) > 1) {
+      S_TOT <-sapply(1:(length(xi_vec)), function(psi_TOT_choose){
+        num <- 0
+        a_check <- -1
+        for(i in 1:nrow(t_df)){
+          a_curr <- t_df$a_val[[i]]
+          if (a_check < a_curr){
+            
+            df_temp <- calculate_tau_k(df, psi_hat=psi_hat, t_df=t_df, 
+                                       a_k=a_curr)
+            
+            names(df_temp)[names(df_temp)==paste0("w_m", m)] <- "w_m_curr"
+            df_temp <- df_temp %>% mutate(
+              w_nu_ind = as.integer(w_m_curr >= psi_TOT_choose)
+            )
+            names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
+            names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
+            
+            num <- num + with(df_temp, sum((a_k-fit_k)*a_k*w_nu_ind*tau_rsd))
+          }
+        }
+        return(num)
+      })
+    } else {
+      S_TOT <- c()
+    }
+    
+    S_vec <- c(S_CT, S_TOT)
     
     J <- construct_jacobian(df, t_df=t_df, psi_hat=psi_hat)
     psi_hat <- solve(J, S_vec) + psi_hat
@@ -773,23 +810,24 @@ t0_max <- 100
 
 #PSI's when CT and TOT dependency (should also work in general)
 psi_star_CT <- c(log(2), log(1.5))
+t_psi_vec <- c(0, 40)
 #psi_star_CT <- c(log(2))
 
 #PSI's for TOT dependency. 
 # NOTE: 1st element must be zero.
 # AND the treatment effect is the cumulative sum
 
-#psi_star_TOT <- c(0)
-#xi_vec <- c(0)
-psi_star_TOT <- c(0, log(1.2))
-xi_vec <- c(0, 20)
+psi_star_TOT <- c(0)
+xi_vec <- c(0)
+#psi_star_TOT <- c(0, log(1.2))
+#xi_vec <- c(0, 20)
 #psi_star_TOT <- c(0, log(1.2), log(0.3))
 #xi_vec <- c(0, 5, 20)
 
 psi_star_list <- list(psi_star_CT, psi_star_TOT)
 
 t_a_vec   <- c(0, 40)
-t_psi_vec <- c(0, 30)
+
 
 
 TOT_times_vec <- sort(unique(as.vector(sapply(xi_vec, function(q){t_a_vec + q}))))
