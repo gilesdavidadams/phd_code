@@ -37,9 +37,9 @@ create_sample <- function(t_df, psi_star_list){
   
   # pre-fills TOT variables
   df <- df %>% add_column(w_TOT = rep(0,n))
-  for(i in 0:length(TOT_times_vec)){
+  for(m in 0:(length(TOT_times_vec)-1)){
     df <- df %>% add_column(w_m = rep(0,n))
-    names(df)[names(df)=="w_m"] <- paste0("w_m",i)
+    names(df)[names(df)=="w_m"] <- paste0("w_m",m)
   }
   
   
@@ -300,121 +300,9 @@ calculate_dtau_dpsi <- function(df, t_df, psi_hat,
 }
 
 
+### LR CALCULATIONS ###
 
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-### ESTIMATION ###
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-newton_raphson_psi <- function(df, t_df,
-                               psi_start, psi_choose=0, 
-                               tol=0.001, max_iter=20, psi_max = 10){
-  psi_hat <- psi_start
-  psi_next <- psi_hat[[psi_choose+1]]
-  
-  psi_old <- psi_next
-  steps <- 1L
-  fail_flag <- F
-  
-  while(((sum(abs(psi_next - psi_old)) > tol) | steps == 1) &
-        (steps <= max_iter) & (max(abs(psi_next)) < psi_max)){
-    
-    psi_old <- psi_next
-    num <- 0
-    denom <- 0
-    a_check <- -1
-    
-    for(i in 1:nrow(t_df)){
-      if(t_df$psi_counter[[i]] == psi_choose){
-        a_curr <- t_df$a_val[[i]]
-        if (a_check < a_curr){
-          df_temp <- calculate_tau_k(df, psi_hat=psi_hat, t_df=t_df, 
-                                     a_k=a_curr)
-          
-          names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
-          names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
-          
-          num <- num + with(df_temp, sum((a_k-fit_k)*tau_k))
-        }
-        a_check <- a_curr
-      }
-    }
-    
-    t_df_psi <- t_df %>% filter( .$psi_counter == psi_choose)
-    for(a_curr in t_df_psi$a_val){
-      for(i in 1:nrow(t_df_psi)){
-        a_dash <- t_df_psi$a_val[[i]]
-        psi_dash <- t_df_psi$psi_counter[[i]]
-        
-        if((a_dash >= a_curr) & (psi_dash == psi_choose)){
-          df_temp <- calculate_tau_rsd(df, t_df=t_df,
-                                       psi_hat=psi_hat,
-                                       a_k=a_dash, psi_k=psi_dash)
-          
-          names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
-          names(df_temp)[names(df_temp)==paste0("a_", a_dash)] <- "a_dish"
-          names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
-          
-          if(a_dash == a_curr){
-            denom <- denom + with(df_temp, sum((a_k-fit_k)*a_k*tau_rsd))
-          } else {
-            denom <- denom + with(df_temp, sum((a_k-fit_k)*a_dish*tau_rsd))
-          }
-        }
-      }
-    }
-    
-    psi_next <- psi_old + num/denom
-    steps <- steps + 1
-    psi_hat[[psi_choose+1]] <- psi_next
-  }
-  
-  if (max(abs(psi_next)) >= psi_max){
-    fail_flag <- T
-  }
-  
-  
-  return(list(psi_hat, steps, fail_flag))
-}
-
-
-newton_raphson_iterative <- function(df, t_df, 
-                                     psi_init=rep(0, length(t_psi_vec)),
-                                     tol=0.001, max_iter=20){
-  
-  psi_current <- psi_init
-  psi_old <- psi_current
-  steps <- 1L
-  
-  follow_df <- tibble(psi_follow=integer(),
-                      psi_before=double(), psi_after=double(),
-                      nr_steps=integer())
-  fail_flag_iter <- FALSE
-  while(((sum(abs(psi_current - psi_old)) > tol) | steps == 1) &
-        (steps <= max_iter) & isTRUE(!fail_flag_iter)){
-    
-    psi_old <- psi_current
-    
-    for (i in ((length(t_psi_vec):1)-1)){
-      nr_out <- newton_raphson_psi(df, t_df=t_df, 
-                                   psi_start=psi_current,
-                                   psi_choose=i)
-      psi_current <- nr_out[[1]]
-      
-      fail_flag_iter <- nr_out[[3]]
-      
-      
-      follow_df <- follow_df %>% add_row(psi_follow=i,
-                                         psi_before=psi_old[[i+1]],
-                                         psi_after=psi_current[[i+1]],
-                                         nr_steps=nr_out[[2]]) 
-    }
-    steps <- steps + 1
-  }
-  
-  return(list(psi_current, steps, follow_df, fail_flag_iter))
-}
-
-
-construct_jacobian <- function(df, t_df, psi_hat_list){
+calculate_jacobian <- function(df, t_df, psi_hat_list){
   
   psi_hat_CT <- psi_hat_list[[1]]
   psi_hat_TOT <- psi_hat_list[[2]]
@@ -595,6 +483,183 @@ construct_jacobian <- function(df, t_df, psi_hat_list){
 }
 
 
+calculate_score <- function(df, t_df, psi_hat_list){
+  
+  S_CT <- sapply(0:(length(t_psi_vec)-1), function(psi_choose){
+    num <- 0
+    a_check <- -1
+    for(i in 1:nrow(t_df)){
+      if(t_df$psi_counter[[i]] == psi_choose){
+        a_curr <- t_df$a_val[[i]]
+        if (a_check < a_curr){
+          df_temp <- calculate_tau_k(df, psi_hat_list=psi_hat_list, t_df=t_df, 
+                                     a_k=a_curr)
+          
+          names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
+          names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
+          
+          num <- num + with(df_temp, sum((a_k-fit_k)*tau_k))
+        }
+        a_check <- a_curr
+      }
+    }
+    return(num)
+  }) 
+  
+  #TOT varying component
+  if (length(xi_vec) > 1) {
+    S_TOT <-sapply(1:(length(xi_vec)-1), function(psi_TOT_choose){
+      num <- 0
+      a_check <- -1
+      for(m in 0:(nrow(t_df)-1)){
+        a_curr <- t_df$a_val[[m+1]]
+        if (a_check < a_curr){
+          
+          df_temp <- df %>% calculate_tau_k(psi_hat_list=psi_hat_list, t_df=t_df, 
+                                     a_k=a_curr)
+          
+          names(df_temp)[names(df_temp)==paste0("w_m", m)] <- "w_m_curr"
+          df_temp <- df_temp %>% mutate(
+            w_nu_ind = as.integer(w_m_curr >= psi_TOT_choose)
+          )
+          names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
+          names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
+          
+          num <- num + with(df_temp, sum((a_k-fit_k)*w_nu_ind*tau_k))
+        }
+        a_check <- a_curr
+      }
+      return(num)
+    })
+  } else {
+    S_TOT <- c()
+  }
+  
+  S_vec <- c(S_CT, S_TOT)
+  
+  return(S_vec)
+  
+  
+}
+
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+### ESTIMATION ###
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+newton_raphson_psi <- function(df, t_df,
+                               psi_start, psi_choose=0, 
+                               tol=0.001, max_iter=20, psi_max = 10){
+  psi_hat <- psi_start
+  psi_next <- psi_hat[[psi_choose+1]]
+  
+  psi_old <- psi_next
+  steps <- 1L
+  fail_flag <- F
+  
+  while(((sum(abs(psi_next - psi_old)) > tol) | steps == 1) &
+        (steps <= max_iter) & (max(abs(psi_next)) < psi_max)){
+    
+    psi_old <- psi_next
+    num <- 0
+    denom <- 0
+    a_check <- -1
+    
+    for(i in 1:nrow(t_df)){
+      if(t_df$psi_counter[[i]] == psi_choose){
+        a_curr <- t_df$a_val[[i]]
+        if (a_check < a_curr){
+          df_temp <- calculate_tau_k(df, psi_hat=psi_hat, t_df=t_df, 
+                                     a_k=a_curr)
+          
+          names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
+          names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
+          
+          num <- num + with(df_temp, sum((a_k-fit_k)*tau_k))
+        }
+        a_check <- a_curr
+      }
+    }
+    
+    t_df_psi <- t_df %>% filter( .$psi_counter == psi_choose)
+    for(a_curr in t_df_psi$a_val){
+      for(i in 1:nrow(t_df_psi)){
+        a_dash <- t_df_psi$a_val[[i]]
+        psi_dash <- t_df_psi$psi_counter[[i]]
+        
+        if((a_dash >= a_curr) & (psi_dash == psi_choose)){
+          df_temp <- calculate_tau_rsd(df, t_df=t_df,
+                                       psi_hat=psi_hat,
+                                       a_k=a_dash, psi_k=psi_dash)
+          
+          names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
+          names(df_temp)[names(df_temp)==paste0("a_", a_dash)] <- "a_dish"
+          names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
+          
+          if(a_dash == a_curr){
+            denom <- denom + with(df_temp, sum((a_k-fit_k)*a_k*tau_rsd))
+          } else {
+            denom <- denom + with(df_temp, sum((a_k-fit_k)*a_dish*tau_rsd))
+          }
+        }
+      }
+    }
+    
+    psi_next <- psi_old + num/denom
+    steps <- steps + 1
+    psi_hat[[psi_choose+1]] <- psi_next
+  }
+  
+  if (max(abs(psi_next)) >= psi_max){
+    fail_flag <- T
+  }
+  
+  
+  return(list(psi_hat, steps, fail_flag))
+}
+
+
+newton_raphson_iterative <- function(df, t_df, 
+                                     psi_init=rep(0, length(t_psi_vec)),
+                                     tol=0.001, max_iter=20){
+  
+  psi_current <- psi_init
+  psi_old <- psi_current
+  steps <- 1L
+  
+  follow_df <- tibble(psi_follow=integer(),
+                      psi_before=double(), psi_after=double(),
+                      nr_steps=integer())
+  fail_flag_iter <- FALSE
+  while(((sum(abs(psi_current - psi_old)) > tol) | steps == 1) &
+        (steps <= max_iter) & isTRUE(!fail_flag_iter)){
+    
+    psi_old <- psi_current
+    
+    for (i in ((length(t_psi_vec):1)-1)){
+      nr_out <- newton_raphson_psi(df, t_df=t_df, 
+                                   psi_start=psi_current,
+                                   psi_choose=i)
+      psi_current <- nr_out[[1]]
+      
+      fail_flag_iter <- nr_out[[3]]
+      
+      
+      follow_df <- follow_df %>% add_row(psi_follow=i,
+                                         psi_before=psi_old[[i+1]],
+                                         psi_after=psi_current[[i+1]],
+                                         nr_steps=nr_out[[2]]) 
+    }
+    steps <- steps + 1
+  }
+  
+  return(list(psi_current, steps, follow_df, fail_flag_iter))
+}
+
+
+
+
+
 
 newton_raphson_grad <- function(df, t_df,
                                 psi_start_list=list(rep(0, length(t_psi_vec)),
@@ -602,11 +667,6 @@ newton_raphson_grad <- function(df, t_df,
                                 tol=0.001, max_iter=20, psi_max = 10){
   
   psi_hat_list <- psi_start_list
-  psi_hat_vec <- psi_hat_list[[1]]
-  if (length(psi_hat_list[[2]]) > 1){
-    psi_hat_vec <- c(psi_hat_vec, psi_hat_list[[2]][2:length(psi_hat_list[[2]])])
-  }
-  #psi_hat <- psi_start
   psi_old_list <- psi_hat_list
   steps <- 1L
   fail_flag <- F
@@ -616,67 +676,30 @@ newton_raphson_grad <- function(df, t_df,
     
     psi_old_list <- psi_hat_list
     
+    #psi_hat_vec <- psi_hat_list[[1]]
+    #if (length(psi_hat_list[[2]]) > 1){
+    #  psi_hat_vec <- c(psi_hat_vec, psi_hat_list[[2]][2:length(psi_hat_list[[2]])])
+    #}
+    
     #CT varying component
-    S_CT <- sapply(0:(length(t_psi_vec)-1), function(psi_choose){
-      num <- 0
-      a_check <- -1
-      for(i in 1:nrow(t_df)){
-        if(t_df$psi_counter[[i]] == psi_choose){
-          a_curr <- t_df$a_val[[i]]
-          if (a_check < a_curr){
-            df_temp <- calculate_tau_k(df, psi_hat=psi_hat, t_df=t_df, 
-                                       a_k=a_curr)
-            
-            names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
-            names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
-            
-            num <- num + with(df_temp, sum((a_k-fit_k)*tau_k))
-          }
-          a_check <- a_curr
-        }
-      }
-      return(num)
-    }) 
     
-    #TOT varying component
-    if (length(xi_vec) > 1) {
-      S_TOT <-sapply(1:(length(xi_vec)), function(psi_TOT_choose){
-        num <- 0
-        a_check <- -1
-        for(i in 1:nrow(t_df)){
-          a_curr <- t_df$a_val[[i]]
-          if (a_check < a_curr){
-            
-            df_temp <- calculate_tau_k(df, psi_hat=psi_hat, t_df=t_df, 
-                                       a_k=a_curr)
-            
-            names(df_temp)[names(df_temp)==paste0("w_m", m)] <- "w_m_curr"
-            df_temp <- df_temp %>% mutate(
-              w_nu_ind = as.integer(w_m_curr >= psi_TOT_choose)
-            )
-            names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
-            names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
-            
-            num <- num + with(df_temp, sum((a_k-fit_k)*a_k*w_nu_ind*tau_rsd))
-          }
-        }
-        return(num)
-      })
-    } else {
-      S_TOT <- c()
-    }
+    S_vec <- df %>% calculate_score(t_df=t_df, psi_hat_list=psi_hat_list)
     
-    S_vec <- c(S_CT, S_TOT)
     
-    J <- construct_jacobian(df, t_df=t_df, psi_hat=psi_hat)
-    psi_hat <- solve(J, S_vec) + psi_hat
+    J <- df %>% calculate_jacobian(t_df=t_df, psi_hat_list=psi_hat_list)
+    psi_hat_vec <- solve(J, S_vec) + psi_hat_vec
+    psi_hat_list <- list(psi_hat_vec[1:length(t_psi_vec)],
+                          c(0, if(length(psi_hat_vec) > length(t_psi_vec)){
+                                  psi_hat_vec[(length(t_psi_vec)+1):length(psi_hat_vec)]}
+                            else{c()}))
+    
     steps <- steps + 1
   }
   
-  if (max(abs(psi_hat)) >= psi_max){
-    fail_flag <- T
-  }
-  return(list(psi_hat, steps, fail_flag))
+  #if (max(abs(psi_hat_list)) >= psi_max){
+  #  fail_flag <- T
+  #}
+  return(list(psi_hat_list, steps, fail_flag))
 }
 
 
@@ -795,10 +818,62 @@ calculate_variance <- function(df, psi_hat, t_a_vec, t_psi_vec, t_df){
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+### SPOOKY TESTING REALM ###
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+test_plot_1 <- function(x_coords = seq(0, 2, 0.1), y_coords = seq(0, 2, 0.1)){
+  
+  n <- 1000
+  t0_min <- 10
+  t0_max <- 100
+  
+  psi_star_CT <- c(log(2))
+  t_psi_vec <- c(0)
+  
+  psi_star_TOT <- c(0, log(1.5))
+  xi_vec <- c(0, 30)
+  
+  psi_star_list <- list(psi_star_CT, psi_star_TOT)
+  t_a_vec   <- c(0, 30)
+  
+  TOT_times_vec <- sort(unique(as.vector(sapply(xi_vec, function(q){t_a_vec + q}))))
+  t_df <- get_time_df(t_a_vec, t_psi_vec, TOT_times_vec)
+  
+  df <- create_sample(t_df, psi_star_list=psi_star_list)
+  df <- df %>% fit_treatment_models(t_a_vec=t_a_vec, 
+                                    t_psi_vec=t_psi_vec,
+                                    xi_vec=xi_vec)
+  
+  score_CT <- c()
+  score_TOT <- c()
+  for (psi_CT in x_coords){
+    for (psi_TOT in y_coords){
+      S <- df %>% calculate_score(t_df=t_df, psi_hat_list=list(c(psi_CT), c(0,psi_TOT)))
+      score_CT <- c(score_CT, S[[1]])
+      score_TOT <- c(score_TOT, S[[2]])
+    }
+  }
+  
+  score_CT <- score_CT / max(score_CT)
+  score_TOT <- score_TOT / max(score_TOT)
+  
+  old_pars <- par(mfrow=c(1,2))
+  image(x_coords, y_coords, matrix(score_CT, nrow=length(x_coords), byrow=T))
+  contour(x_coords, y_coords, matrix(score_CT, nrow=length(x_coords), byrow=T),
+          add = TRUE, levels = seq(-1,1,0.2))
+  image(x_coords, y_coords, matrix(score_TOT, nrow=length(x_coords), byrow=T))
+  contour(x_coords, y_coords, matrix(score_TOT, nrow=length(x_coords), byrow=T),
+           add = TRUE, levels = seq(-1,1,0.2))
+  par(old_pars)
+}
+
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 ### MAIN # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-n <- 100
+n <- 1000
 #lambda <- 50^-1
 t0_min <- 10
 t0_max <- 100 
@@ -809,43 +884,83 @@ t0_max <- 100
 #psi_star <- c(log(1.8), log(1.5), log(2))
 
 #PSI's when CT and TOT dependency (should also work in general)
-psi_star_CT <- c(log(2), log(1.5))
-t_psi_vec <- c(0, 40)
-#psi_star_CT <- c(log(2))
+psi_star_CT <- c(log(2))
+t_psi_vec <- c(0)
+#psi_star_CT <- c(log(2), log(1.5))
+#t_psi_vec <- c(0, 40)
 
 #PSI's for TOT dependency. 
 # NOTE: 1st element must be zero.
 # AND the treatment effect is the cumulative sum
 
-psi_star_TOT <- c(0)
-xi_vec <- c(0)
-#psi_star_TOT <- c(0, log(1.2))
-#xi_vec <- c(0, 20)
+#psi_star_TOT <- c(0)
+#xi_vec <- c(0)
+psi_star_TOT <- c(0, log(1.5))
+xi_vec <- c(0, 30)
 #psi_star_TOT <- c(0, log(1.2), log(0.3))
 #xi_vec <- c(0, 5, 20)
 
 psi_star_list <- list(psi_star_CT, psi_star_TOT)
 
-t_a_vec   <- c(0, 40)
-
-
+t_a_vec   <- c(0, 30)
 
 TOT_times_vec <- sort(unique(as.vector(sapply(xi_vec, function(q){t_a_vec + q}))))
 t_df <- get_time_df(t_a_vec, t_psi_vec, TOT_times_vec)
 
 
-df <- create_sample(t_df, psi_star_list=psi_star_list)
-df <- df %>% fit_treatment_models(t_a_vec=t_a_vec, 
-                                  t_psi_vec=t_psi_vec,
-                                  xi_vec=xi_vec)
-
-
-
-
-
-
 
 sims <- 100
+#df <- create_sample(t_df, psi_star_list=psi_star_list)
+#df <- df %>% fit_treatment_models(t_a_vec=t_a_vec, 
+#                                  t_psi_vec=t_psi_vec,
+#                                  xi_vec=xi_vec)
+
+#df %>% newton_raphson_grad(t_df=t_df)
+
+
+nr_out <- tibble(psi_hat_CT_0=numeric(),
+                 psi_hat_TOT_0=numeric()
+                 )
+
+nr_out <- foreach(i=c(1:sims), 
+                  .combine=rbind,
+                  .packages='tidyverse') %dopar% 
+  {
+    
+    df <- create_sample(t_df, psi_star_list=psi_star_list)
+    df <- df %>% fit_treatment_models(t_a_vec=t_a_vec, 
+                                      t_psi_vec=t_psi_vec,
+                                      xi_vec=xi_vec)
+    
+    #nri_out <- newton_raphson_iterative(df, t_df=t_df)
+    nri_out <- newton_raphson_grad(df, t_df=t_df)
+    
+    tibble(psi_hat_CT_0 = nri_out[[1]][[1]],
+           psi_hat_TOT_0 = nri_out[[1]][[2]][[2]]
+    )
+  }
+
+cat("psi(0) mean","\n","true mean --- s.mean of est. means","\n",
+    paste(format(
+      with(nr_out, c(psi_star_CT[[1]], mean(psi_hat_CT_0, na.rm=T)))
+      , digits = 5), collapse = "   "),
+
+    "\n\n","psi(1) mean", "\n", "true mean --- s.mean of est. means", "\n",  
+    paste(format(
+      with(nr_out, c(psi_star_TOT[[2]], mean(psi_hat_TOT_0, na.rm=T)))
+      , digits = 5), collapse = "   "),
+
+    sep="")
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -855,6 +970,20 @@ nr_out <- tibble(psi_hat_0=numeric(), var_psi_0=numeric()
                  #, var_psi_0_alt=numeric(), var_psi_1_alt=numeric()
                  #,psi_hat_2=numeric(), var_psi_2=numeric()
 )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 nr_out <- foreach(i=c(1:sims), 
