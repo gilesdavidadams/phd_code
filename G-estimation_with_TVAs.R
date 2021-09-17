@@ -11,10 +11,48 @@ library(gridExtra)
 library(foreach)
 library(doParallel)
 library(tidyverse)
-registerDoParallel()
 
 
 ### DATASET CREATION / PRELIMINARY DATA WRANGLING ###
+
+
+
+get_time_df <- function(t_a_vec, t_psi_vec, xi_vec, ...){
+  
+  times_vec <- sort(unique(c(t_psi_vec, 
+                              as.vector(sapply(xi_vec, function(xi){t_a_vec + xi})))))
+  time_df <- tibble(t=numeric(), t_next=numeric(),
+                    a_val=integer(), psi_counter=integer())
+  for(i in 1:length(times_vec)){
+    time <- times_vec[[i]]
+    if(i < length(times_vec)){
+      time_next <- times_vec[[i+1]]
+    } else {
+      time_next <- Inf
+    }
+    a_val       <- as.integer(length(t_a_vec)-1 - sum(t_a_vec > time))
+    psi_counter <- as.integer(length(t_psi_vec)-1 - sum(t_psi_vec > time))
+    
+    time_df <- time_df %>% add_row(t=time, t_next=time_next,
+                                   a_val=a_val,
+                                   psi_counter=psi_counter)
+  }
+  return(time_df)
+}
+
+create_m_k_map <- function(t_df){
+  a_val_curr <- 0
+  m_k_map <- c(0)
+  for (i in 1:nrow(t_df)){
+    time_row <- t_df[i,]
+    if (time_row$a_val > a_val_curr){
+      m_k_map <- c(m_k_map, i-1)
+      a_val_curr <- time_row$a_val
+    }
+  }
+  return(m_k_map)
+}
+
 create_sample <- function(t_df, psi_star_list){
   
   psi_star_CT <- psi_star_list[[1]]
@@ -37,7 +75,7 @@ create_sample <- function(t_df, psi_star_list){
   
   # pre-fills TOT variables
   df <- df %>% add_column(w_TOT = rep(0,n))
-  for(m in 0:(length(TOT_times_vec)-1)){
+  for(m in 0:(nrow(t_df)-1)){
     df <- df %>% add_column(w_m = rep(0,n))
     names(df)[names(df)=="w_m"] <- paste0("w_m",m)
   }
@@ -81,43 +119,6 @@ create_sample <- function(t_df, psi_star_list){
   
   return(select(df, -c(t0_rsd, temp, w_TOT, g_psi)))
 }
-
-
-get_time_df <- function(t_a_vec, t_psi_vec, TOT_times_vec, ...){
-  
-  times_vec <- sort(unique(c(t_psi_vec, TOT_times_vec)))
-  time_df <- tibble(t=numeric(), t_next=numeric(),
-                    a_val=integer(), psi_counter=integer())
-  for(i in 1:length(times_vec)){
-    time <- times_vec[[i]]
-    if(i < length(times_vec)){
-      time_next <- times_vec[[i+1]]
-    } else {
-      time_next <- Inf
-    }
-    a_val       <- as.integer(length(t_a_vec)-1 - sum(t_a_vec > time))
-    psi_counter <- as.integer(length(t_psi_vec)-1 - sum(t_psi_vec > time))
-    
-    time_df <- time_df %>% add_row(t=time, t_next=time_next,
-                                   a_val=a_val,
-                                   psi_counter=psi_counter)
-  }
-  return(time_df)
-}
-
-create_m_k_map <- function(t_df){
-  a_val_curr <- 0
-  m_k_map <- c(0)
-  for (i in 1:nrow(t_df)){
-    time_row <- t_df[i,]
-    if (time_row$a_val > a_val_curr){
-      m_k_map <- c(m_k_map, i-1)
-      a_val_curr <- time_row$a_val
-    }
-  }
-  return(m_k_map)
-}
-
 
 fit_treatment_models <- function(df, t_a_vec, t_psi_vec, xi_vec = c(0)){
   
@@ -953,18 +954,91 @@ test_plot_1 <- function(x_coords = seq(-2, 2, 0.2), y_coords = seq(-2, 2, 0.2)){
   par(old_pars)
 }
 
+nr_run <- function(psi_star_CT, t_psi_vec, 
+                   psi_star_TOT, xi_vec,
+                   t_a_vec,
+                   n = 1000,
+                   t0_min = 10,
+                   t0_max = 100,
+                   sims = 10){
+  
+  n_psi <- length(t_psi_vec)
+  n_xi <- length(xi_vec) - 1
+  
+  psi_star_list <- list(psi_star_CT, psi_star_TOT)
+  t_df <- get_time_df(t_a_vec, t_psi_vec, xi_vec)
+  
+  cl <- makePSOCKcluster(28)
+  registerDoParallel(cl)
 
+  nr_out <- foreach(i=c(1:sims), .combine=rbind,
+                    .export=c("create_sample", "fit_treatment_models",
+                              "calculate_tau_k", "calculate_tau_rsd",
+                              "calculate_tau_rsd_m", "calculate_jacobian",
+                              "calculate_score", "newton_raphson_grad",
+                              "n", "t0_min", "t0_max", "sims"),
+                    .packages="tidyverse") %dopar%
+    
+    {
+      df <- create_sample(t_df, psi_star_list=psi_star_list)
+      df <- df %>% fit_treatment_models(t_a_vec=t_a_vec, 
+                                        t_psi_vec=t_psi_vec,
+                                        xi_vec=xi_vec)
+      
+      #nri_out <- newton_raphson_iterative(df, t_df=t_df)
+      nri_out <- df %>% newton_raphson_grad(t_df=t_df)
+      
+      unlist(nri_out[[1]])
+    }
+  
+  stopCluster(cl)
+  
+  psi_star_comb <- c(psi_star_CT, psi_star_TOT)
+  
+  for (j in 1:(dim(nr_out)[[2]])){
+    if (j <= length(t_psi_vec)) {
+      psi_lab <- paste0("psi CT (", j-1, ")")
+    }
+    else if (j >= length(t_psi_vec) + 2) {
+      psi_lab <- paste0("psi TOT (", j-length(t_psi_vec)-1, ")")
+    }
+    else { 
+      next 
+    }
+    
+    cat(psi_lab, "\n",
+        paste(format(
+          c(psi_star_comb[[j]], mean(nr_out[,j], na.rm=T))
+          , digits = 5), collapse = "   "),
+        "\n")
+  }
+  
+  #return(NULL)
+}
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 ### MAIN # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-n <- 1000
-#lambda <- 50^-1
-t0_min <- 10
-t0_max <- 100 
+nr_run(psi_star_CT = c(log(2)), 
+       t_psi_vec = c(0),
+       psi_star_TOT = c(0, log(1.5)),
+       xi_vec = c(0, 30),
+       t_a_vec  = c(0, 30),
+       sims=100
+)
 
-# PSI's for no TOT dependency
+
+
+
+function_test(psi_star_CT = c(log(2)), 
+              t_psi_vec = c(0),
+              psi_star_TOT = c(0, log(1.5)),
+              xi_vec = c(0, 30),
+              t_a_vec  = c(0, 30))
+       
+
+ # PSI's for no TOT dependency
 #psi_star <- c(log(2))
 #psi_star <- c(log(1.8), log(1.5), log(2))
 #psi_star <- c(log(1.8), log(1.5), log(2))
@@ -986,16 +1060,19 @@ xi_vec <- c(0, 30)
 #psi_star_TOT <- c(0, log(1.2), log(0.3))
 #xi_vec <- c(0, 5, 20)
 
-psi_star_list <- list(psi_star_CT, psi_star_TOT)
+
 
 t_a_vec   <- c(0, 30)
 
-TOT_times_vec <- sort(unique(as.vector(sapply(xi_vec, function(q){t_a_vec + q}))))
+psi_star_list <- list(psi_star_CT, psi_star_TOT)
 t_df <- get_time_df(t_a_vec, t_psi_vec, TOT_times_vec)
 
+TOT_times_vec <- sort(unique(as.vector(sapply(xi_vec, function(q){t_a_vec + q}))))
 
 
-sims <- 100
+
+
+
 #df <- create_sample(t_df, psi_star_list=psi_star_list)
 #df <- df %>% fit_treatment_models(t_a_vec=t_a_vec, 
 #                                  t_psi_vec=t_psi_vec,
@@ -1008,6 +1085,25 @@ nr_out <- tibble(psi_hat_CT_0=numeric(),
                  psi_hat_TOT_0=numeric(),
                  iters=integer()
                  )
+
+nr_out <- foreach(i=c(1:sims), .combine=rbind) %dopar%
+  
+  {
+    
+    df <- create_sample(t_df, psi_star_list=psi_star_list)
+    df <- df %>% fit_treatment_models(t_a_vec=t_a_vec, 
+                                      t_psi_vec=t_psi_vec,
+                                      xi_vec=xi_vec)
+    
+    #nri_out <- newton_raphson_iterative(df, t_df=t_df)
+    nri_out <- newton_raphson_grad(df, t_df=t_df)
+    
+    unlist(nri_out[[1]])
+    
+  }
+
+
+
 
 nr_out <- foreach(i=c(1:sims), 
                   .combine=rbind,
