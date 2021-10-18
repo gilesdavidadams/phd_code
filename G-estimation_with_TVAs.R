@@ -918,12 +918,44 @@ calculate_variance <- function(df, psi_hat_list, prm){
   D <- matrix(D_vec, nrow=row_count, byrow=T)
   D <- t(D)
   
+
+  D_psi_vec <- c()
+  for (j in 1:(length(psi_hat_CT) + length(psi_hat_TOT) - 1)){
+    for (a_curr in 0:(length(t_a_vec)-1)){
+      df_temp <- df %>% filter( .$ti > t_a_vec[[a_curr+1]])
+      
+      if (j <= length(psi_hat_CT)) {
+        psi_choose <- j - 1
+        t_df_psi <- t_df %>% filter( .$psi_counter == psi_choose)
+        if (a_curr %in% t_df_psi$a_val) {
+          D_psi_vec <- c(D_psi_vec, rep(1, dim(df_temp)[[1]]))
+        } else {
+          D_psi_vec <- c(D_psi_vec, rep(0, dim(df_temp)[[1]]))
+        }
+      } else {
+        nu <- j - length(psi_hat_CT)
+        m_k <- sum(t_df$a_val < a_curr)
+        
+        names(df_temp)[names(df_temp)==paste0("w_m", m_k)] <- "w_m_k"
+        df_temp <- df_temp %>% mutate(w_nu = as.integer(w_m_k >= nu))
+        
+        D_psi_vec <- c(D_psi_vec, df_temp$w_nu)
+      }
+    }
+  }
+  D_psi <- matrix(D_psi_vec, byrow=F, ncol=length(psi_hat_CT) + length(psi_hat_TOT) - 1)
+  
+  
   
   fit <- c()
-  for (i in 0:(length(t_a_vec)-1)){
-    df_temp <- df %>% filter( .$ti > t_a_vec[[i+1]])
-    fit <- c(fit, df_temp[[paste0('fit_', i)]])
+  tau_vec <- c()
+  for (a_curr in 0:(length(t_a_vec)-1)){
+    df_temp <- df %>% filter( .$ti > t_a_vec[[a_curr+1]]) %>% 
+      calculate_tau_k(psi_hat_list=psi_hat_list, prm=prm, a_k = a_curr)
+    fit <- c(fit, df_temp[[paste0('fit_', a_curr)]])
+    tau_vec <- c(tau_vec, df_temp$tau_k)
   }
+  
   
   Jbb_vec <- c()
   for(i in 1:dim(D)[2]){
@@ -933,84 +965,28 @@ calculate_variance <- function(df, psi_hat_list, prm){
   }
   Jbb <- matrix(Jbb_vec, nrow=sqrt(length(Jbb_vec)), byrow=T)
   
-  Jtt <- df %>% calculate_hessian(prm=prm, psi_hat_list=psi_hat_list)
   
-  J_tb <- sapply(1:(length(psi_hat_CT) + length(psi_hat_TOT) - 1), function(row_counter){
-            sapply(0:(length(t_a_vec)-1), function(k){
-              
-              df_temp <- df %>% calculate_tau_k(psi_hat_list=psi_hat_list,
-                                                prm=prm, a_k=k)
-              names(df_temp)[names(df_temp)==paste0("a_", k)] <- "a_k"
-              names(df_temp)[names(df_temp)==paste0("fit_", k)] <- "fit_k"
-              
-              if (row_counter <= length(psi_hat_CT)){
-                i <- row_counter - 1
-                t_df_psi_i <- t_df %>% filter( .$psi_counter == i)
-                
-                as.numeric(k %in% t_df_psi_i$a_val)
-
-                
-              } else {
-                d_fun <- "TOT"
-                i <- row_counter - length(psi_hat_CT)
-              }
-              
-              
-              
+  #Jtt <- df %>% calculate_hessian(prm=prm, psi_hat_list=psi_hat_list)
+  
+  Jtt <- t(sapply(1:dim(D_psi)[[2]], function(i){
+           sapply(1:dim(D_psi)[[2]], function(j){
+              sum(D_psi[,i]*D_psi[,j]*tau_vec*tau_vec*fit*(1-fit))
             })
-    })
-                   
+          }))
   
-  
-  
-  
-  # Jtb <- t(sapply(1:dim(tau)[2], function(i){
-  #           sapply(1:dim(D)[2], function(j){
-  #             sum(D[,j]*tau[,i]*fit*(1-fit))
-  #           })
-  #         }, simplify=T))
-  # 
-  # 
-  # Jtt <- sapply(1:dim(tau)[2], function(i){ 
-  #         sapply(1:dim(tau)[2], function(j){
-  #           sum(tau[,i]*tau[,j]*fit*(1-fit)) 
-  #         })
-  #       })
-
+  Jtb <- t(sapply(1:dim(D_psi)[[2]], function(i){
+            sapply(1:dim(D)[[2]], function(j){
+              sum(D_psi[,i]*D[,j]*tau_vec*fit*(1-fit))
+            })
+          }))
   
   
   JTT <- Jtt - Jtb%*%solve(Jbb)%*%t(Jtb)
   
+  Jacobian <- df %>% calculate_jacobian(prm=prm, psi_hat_list=psi_hat_list)
+  J_inv <- solve(Jacobian)
   
-  
-  Stp_vec <- c()
-  for (i in 0:(length(t_psi_vec)-1)){
-    for (j in 0:(length(t_psi_vec)-1)){
-      t_df_i <- t_df %>% filter( .$psi_counter == i)
-      ds_dpsi <- 0
-      for (a_i in unique(t_df_i$a_val)){
-        t_df_a <- t_df %>% filter( .$a_val == a_i)
-        psi_min <- min(t_df_a$psi_counter)
-        
-        if (j >= psi_min){
-          df_rsd <- calculate_dtau_dpsi(df=df, t_df=t_df, psi_hat=psi_hat,
-                                        a_k=a_i,
-                                        psi_k=j)
-          
-          names(df_rsd)[names(df_rsd)==paste0("a_", a_i)] <- "a_k"
-          names(df_rsd)[names(df_rsd)==paste0("fit_", a_i)] <- "fit_k"
-          ds_dpsi <- ds_dpsi - sum(with(df_rsd, (a_k - fit_k)*dtau_dpsi))
-        }
-      }
-      Stp_vec <- c(Stp_vec, ds_dpsi)
-    }
-  }
-  Stp <- matrix(Stp_vec, nrow=length(t_psi_vec), byrow=T)
-  Stp_inv <- solve(Stp)
-  
-  #Stp_1_inv%*%JTT%*%t(Stp_1_inv)
-  #return(solve(Stp_1)%*%JTT%*%t(solve(Stp_1)))
-  return(solve(Stp)%*%JTT%*%t(solve(Stp)))
+  return(J_inv %*% JTT %*% t(J_inv))
 }
 
 
@@ -1116,6 +1092,8 @@ test_zone <- function(){
   
   psi_hat_list <- nri_out[[1]]
   
+  df %>% calculate_variance(psi_hat_list=psi_hat_list, prm=prm)
+  
 }
 
 nr_run <- function(psi_star_CT, t_psi_vec, 
@@ -1142,12 +1120,15 @@ nr_run <- function(psi_star_CT, t_psi_vec,
   
   cl <- makePSOCKcluster(28)
   registerDoParallel(cl)
+  registerDoParallel()
 
   nr_out <- foreach(i=c(1:sims), .combine=rbind,
                     .export=c("create_sample", "fit_treatment_models",
                               "calculate_tau_k", "calculate_tau_rsd",
-                              "calculate_tau_rsd_m", "calculate_jacobian",
-                              "calculate_score", "newton_raphson_grad"),
+                              "calculate_tau_rsd_m", "calculate_jacobian", 
+                              "calculate_hessian",
+                              "calculate_score", "newton_raphson_grad",
+                              "calculate_variance"),
                     .packages="tidyverse") %dopar%
     
     {
@@ -1155,29 +1136,44 @@ nr_run <- function(psi_star_CT, t_psi_vec,
       df <- df %>% fit_treatment_models(prm=prm)
       
       nri_out <- df %>% newton_raphson_grad(prm=prm)
+      psi_hat_list <- nri_out[[1]]
       
-      unlist(nri_out[[1]])
+      var_hat <- df %>% calculate_variance(psi_hat_list=psi_hat_list, prm=prm)
+      
+      c(unlist(psi_hat_list), diag(var_hat))
     }
   
   stopCluster(cl)
   
   psi_star_comb <- c(psi_star_CT, psi_star_TOT)
   
-  for (j in 1:(dim(nr_out)[[2]])){
-    if (j <= length(t_psi_vec)) {
+  offset_CT <- length(t_psi_vec)
+  offset_psi <- length(psi_star_comb)
+  
+  for (j in 1:length(psi_star_comb)){
+    if (j <= offset_CT) {
       psi_lab <- paste0("psi CT (", j-1, ")")
+      var_index <- j + offset_psi
     }
-    else if (j >= length(t_psi_vec) + 2) {
-      psi_lab <- paste0("psi TOT (", j-length(t_psi_vec)-1, ")")
-    }
-    else { 
-      next 
+    else if (j >= offset_CT + 2) {
+      psi_lab <- paste0("psi TOT (", j-1 - offset_CT, ")")
+      var_index <- j + offset_psi - 1
+    } else {
+      next
     }
     
     cat(psi_lab, "\n",
-        paste(format(
-          c(psi_star_comb[[j]], mean(nr_out[,j], na.rm=T))
-          , digits = 5), collapse = "   "),
+        paste(
+          format(c(psi_star_comb[[j]], 
+                   mean(nr_out[,j], na.rm=T))
+                 , digits = 5),
+          collapse = "\t"),
+        "\n",
+        paste(
+          format(c(var(nr_out[,j]),
+                   mean(nr_out[,var_index], na.rm=T))
+                 , digits = 5),
+          collapse = "\t"),
         "\n")
   }
   
@@ -1193,6 +1189,39 @@ nr_run(psi_star_CT = c(log(2)),
        psi_star_TOT = c(0, log(1.5)),
        xi_vec = c(0, 30),
        t_a_vec  = c(0, 30),
+       n = 1000,
+       sims=1000
+)
+
+
+nr_run(psi_star_CT = c(log(2)), 
+       t_psi_vec = c(0),
+       psi_star_TOT = c(0),
+       xi_vec = c(0),
+       t_a_vec  = c(0, 30),
+       n = 1000,
+       sims=5000
+)
+
+
+nr_run(psi_star_CT = c(log(2), log(1.5)), 
+       t_psi_vec = c(0, 30),
+       psi_star_TOT = c(0),
+       xi_vec = c(0),
+       t_a_vec  = c(0, 30),
+       n = 1000,
+       sims=5000
+)
+
+
+
+nr_run(psi_star_CT = c(log(2)), 
+       t_psi_vec = c(0),
+       psi_star_TOT = c(0, log(1.5), log(0.5)),
+       xi_vec = c(0, 30, 60),
+       t_a_vec  = c(0, 30, 60),
+       t0_max = 120,
+       n = 1000,
        sims=1000
 )
 
