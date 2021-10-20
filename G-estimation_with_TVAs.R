@@ -505,8 +505,6 @@ calculate_jacobian <- function(df, prm, psi_hat_list){
                 }
               }
               
-              
-
             }
           }
         }
@@ -1067,10 +1065,10 @@ test_zone <- function(){
   xi_vec <- c(0, 30)
   t_a_vec  <- c(0, 30)
   
-  n <- 10
+  n <- 20
   t0_min <- 10
   t0_max <- 100
-  sims <- 1
+  sims <- 10
   
   prm <- list(psi_star_CT=psi_star_CT, 
               t_psi_vec=t_psi_vec,
@@ -1120,9 +1118,9 @@ nr_run <- function(psi_star_CT, t_psi_vec,
   
   cl <- makePSOCKcluster(28)
   registerDoParallel(cl)
-  registerDoParallel()
+  #registerDoParallel()
 
-  nr_out <- foreach(i=c(1:sims), .combine=rbind,
+  nr_out <- foreach(icount(sims), .combine=rbind,
                     .export=c("create_sample", "fit_treatment_models",
                               "calculate_tau_k", "calculate_tau_rsd",
                               "calculate_tau_rsd_m", "calculate_jacobian", 
@@ -1130,7 +1128,6 @@ nr_run <- function(psi_star_CT, t_psi_vec,
                               "calculate_score", "newton_raphson_grad",
                               "calculate_variance"),
                     .packages="tidyverse") %dopar%
-    
     {
       df <- create_sample(prm=prm)
       df <- df %>% fit_treatment_models(prm=prm)
@@ -1184,6 +1181,17 @@ nr_run <- function(psi_star_CT, t_psi_vec,
 ### MAIN # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
+# 1 CT, 0 TOT
+nr_run(psi_star_CT = c(log(2)), 
+       t_psi_vec = c(0),
+       psi_star_TOT = c(0),
+       xi_vec = c(0),
+       t_a_vec  = c(0, 30),
+       n = 200,
+       sims=1000
+)
+
+# 1 CT, 1 TOT
 nr_run(psi_star_CT = c(log(2)), 
        t_psi_vec = c(0),
        psi_star_TOT = c(0, log(1.5)),
@@ -1194,23 +1202,13 @@ nr_run(psi_star_CT = c(log(2)),
 )
 
 
-nr_run(psi_star_CT = c(log(2)), 
-       t_psi_vec = c(0),
-       psi_star_TOT = c(0),
-       xi_vec = c(0),
-       t_a_vec  = c(0, 30),
-       n = 1000,
-       sims=5000
-)
-
-
 nr_run(psi_star_CT = c(log(2), log(1.5)), 
        t_psi_vec = c(0, 30),
        psi_star_TOT = c(0),
        xi_vec = c(0),
        t_a_vec  = c(0, 30),
-       n = 1000,
-       sims=5000
+       n = 200,
+       sims=1000
 )
 
 
