@@ -762,9 +762,9 @@ newton_raphson_grad <- function(df, prm,
     steps <- steps + 1
   }
   
-  #if (max(abs(psi_hat_list)) >= psi_max){
-  #  fail_flag <- T
-  #}
+  if (max(abs(unlist(psi_hat_list))) > psi_max){
+    fail_flag <- T
+  }
   return(list(psi_hat_list, steps, fail_flag))
 }
 
@@ -949,7 +949,7 @@ calculate_variance <- function(df, psi_hat_list, prm){
   tau_vec <- c()
   for (a_curr in 0:(length(t_a_vec)-1)){
     df_temp <- df %>% filter( .$ti > t_a_vec[[a_curr+1]]) %>% 
-      calculate_tau_k(psi_hat_list=psi_hat_list, prm=prm, a_k = a_curr)
+      calculate_tau_k(psi_hat_list=psi_hat_list, prm=prm, a_k=a_curr)
     fit <- c(fit, df_temp[[paste0('fit_', a_curr)]])
     tau_vec <- c(tau_vec, df_temp$tau_k)
   }
@@ -1198,11 +1198,33 @@ nr_run(psi_star_CT = c(log(2)),
        xi_vec = c(0, 30),
        t_a_vec  = c(0, 30),
        n = 1000,
+       sims=2000
+)
+
+nr_run(psi_star_CT = c(log(2)), 
+       t_psi_vec = c(0),
+       psi_star_TOT = c(0, log(1.5)),
+       xi_vec = c(0, 30),
+       t_a_vec  = c(0, 30, 60),
+       n = 1000,
        sims=1000
 )
 
 
-nr_run(psi_star_CT = c(log(2), log(1.5)), 
+
+# 2 CT, 0 TOT
+nr_run(psi_star_CT = c(log(1.5), log(2), log(1.2)), 
+       t_psi_vec = c(0, 30, 60),
+       psi_star_TOT = c(0),
+       xi_vec = c(0),
+       t_a_vec  = c(0, 30, 60),
+       n = 1000,
+       sims=1000
+)
+
+
+
+nr_run(psi_star_CT = c(log(1.5), log(2)), 
        t_psi_vec = c(0, 30),
        psi_star_TOT = c(0),
        xi_vec = c(0),
@@ -1211,6 +1233,26 @@ nr_run(psi_star_CT = c(log(2), log(1.5)),
        sims=1000
 )
 
+
+
+
+nr_run(psi_star_CT = c(log(1.5), log(2)), 
+       t_psi_vec = c(0, 30),
+       psi_star_TOT = c(0),
+       xi_vec = c(0),
+       t_a_vec  = c(0, 50),
+       n = 2000,
+       sims=1000
+)
+
+nr_run(psi_star_CT = c(log(1.5), log(2)), 
+       t_psi_vec = c(0, 50),
+       psi_star_TOT = c(0),
+       xi_vec = c(0),
+       t_a_vec  = c(0, 30),
+       n = 2000,
+       sims=1000
+)
 
 
 nr_run(psi_star_CT = c(log(2)), 
