@@ -15,8 +15,6 @@ library(tidyverse)
 
 ### DATASET CREATION / PRELIMINARY DATA WRANGLING ###
 
-
-
 get_time_df <- function(prm, ...){
   
   t_a_vec <- prm$t_a_vec
@@ -44,20 +42,9 @@ get_time_df <- function(prm, ...){
   return(time_df)
 }
 
-create_m_k_map <- function(t_df){
-  a_val_curr <- 0
-  m_k_map <- c(0)
-  for (i in 1:nrow(t_df)){
-    time_row <- t_df[i,]
-    if (time_row$a_val > a_val_curr){
-      m_k_map <- c(m_k_map, i-1)
-      a_val_curr <- time_row$a_val
-    }
-  }
-  return(m_k_map)
-}
 
-create_sample <- function(prm, psi_star_list){
+
+create_sample <- function(prm){
   
   t_df <- prm$t_df
   xi_vec <- prm$xi_vec
@@ -337,6 +324,7 @@ calculate_score <- function(df, prm, psi_hat_list){
     num <- 0
     a_check <- -1
     for(i in 1:nrow(t_df)){
+      #PSICHECK
       if(t_df$psi_counter[[i]] == psi_choose){
         a_curr <- t_df$a_val[[i]]
         if (a_check < a_curr){
@@ -419,6 +407,7 @@ calculate_jacobian <- function(df, prm, psi_hat_list){
         i <- row_counter - 1
 
         psi_choose <- i
+        #PSICHECK
         t_df_psi <- t_df %>% filter( .$psi_counter == psi_choose)
         t_df_a <- t_df %>% filter(.$a_val %in% t_df_psi$a_val)
         
@@ -520,6 +509,188 @@ calculate_jacobian <- function(df, prm, psi_hat_list){
 }
 
 
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+### ESTIMATION ###
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+newton_raphson_grad <- function(df, prm,
+                                psi_start_list=NA, 
+                                tol=0.001, max_iter=20, psi_max = 10){
+  t_psi_vec <- prm$t_psi_vec
+  xi_vec <- prm$xi_vec
+  
+  if(is.na(psi_start_list)) {
+    psi_start_list <- list(rep(0, length(t_psi_vec)),
+                            rep(0, length(xi_vec)))
+  }
+  
+  t_df <- prm$t_df
+  
+  psi_hat_list <- psi_start_list
+  psi_old_list <- psi_hat_list
+  steps <- 1L
+  fail_flag <- F
+  
+  while(((sum(abs(unlist(psi_hat_list) - unlist(psi_old_list))) > tol) | steps == 1) &
+        (steps <= max_iter) & (max(abs(unlist(psi_hat_list))) < psi_max)){
+    
+    psi_old_list <- psi_hat_list
+    
+    S_vec <- df %>% calculate_score(prm=prm, psi_hat_list=psi_hat_list)
+    J <- df %>% calculate_jacobian(prm=prm, psi_hat_list=psi_hat_list)
+
+    
+    psi_hat_vec <- psi_hat_list[[1]]
+    if (length(psi_hat_list[[2]]) > 1){
+      psi_hat_vec <- c(psi_hat_vec, psi_hat_list[[2]][2:length(psi_hat_list[[2]])])
+    }
+    
+    psi_hat_vec <- solve(J, S_vec) + psi_hat_vec
+    psi_hat_list <- list(psi_hat_vec[1:length(t_psi_vec)],
+                          c(0, if(length(psi_hat_vec) > length(t_psi_vec)){
+                                  psi_hat_vec[(length(t_psi_vec)+1):length(psi_hat_vec)]}
+                            else{c()}))
+    psi_hat_vec
+    
+    steps <- steps + 1
+  }
+  
+  if (max(abs(unlist(psi_hat_list))) > psi_max){
+    fail_flag <- T
+  }
+  return(list(psi_hat_list, steps, fail_flag))
+}
+
+
+
+
+calculate_variance <- function(df, psi_hat_list, prm){
+  
+  t_a_vec <- prm$t_a_vec
+  t_psi_vec <- prm$t_psi_vec
+  xi_vec <- prm$xi_vec
+  
+  t_df <- prm$t_df
+  
+  psi_hat_CT <- psi_hat_list[[1]]
+  psi_hat_TOT <- psi_hat_list[[2]]
+  
+  D_vec <- c()
+  row_count <- 0
+  for (i in 0:(length(t_a_vec)-1)) {
+    for (j in -1:(i-1)){
+      for (k in 0:(length(t_a_vec)-1)) {
+        df_temp <- df %>% filter( .$ti > t_a_vec[[k+1]])
+        nk <- nrow(df_temp)
+        if (k == i) {
+          if (j == -1){
+            D_vec <- c(D_vec, rep(1, nk))
+          } else {
+            D_vec <-  c(D_vec, df_temp[[paste0('a_', j)]])
+          }
+        } else {
+          D_vec <- c(D_vec, rep(0, nk))
+        }
+      }
+      row_count <- row_count + 1
+    }
+  }
+  D <- matrix(D_vec, nrow=row_count, byrow=T)
+  D <- t(D)
+  
+
+  D_psi_vec <- c()
+  for (j in 1:(length(psi_hat_CT) + length(psi_hat_TOT) - 1)){
+    for (a_curr in 0:(length(t_a_vec)-1)){
+      df_temp <- df %>% filter( .$ti > t_a_vec[[a_curr+1]]) %>%
+                     calculate_tau_k(psi_hat_list=psi_hat_list, prm=prm, a_k=a_curr)
+      
+      if (j <= length(psi_hat_CT)) {
+        psi_choose <- j - 1
+        #PSICHECK
+        t_df_psi <- t_df %>% filter( .$psi_counter == psi_choose)
+        if (a_curr %in% t_df_psi$a_val) {
+          D_psi_vec <- c(D_psi_vec, rep(1, dim(df_temp)[[1]])*df_temp$tau_k)
+        } else {
+          D_psi_vec <- c(D_psi_vec, rep(0, dim(df_temp)[[1]])*df_temp$tau_k)
+        }
+      } else {
+        nu <- j - length(psi_hat_CT)
+        m_k <- sum(t_df$a_val < a_curr)
+        
+        names(df_temp)[names(df_temp)==paste0("w_m", m_k)] <- "w_m_k"
+        df_temp <- df_temp %>% mutate(w_nu = as.integer(w_m_k >= nu))
+        
+        D_psi_vec <- c(D_psi_vec, df_temp$w_nu*df_temp$tau_k)
+      }
+    }
+  }
+  D_psi <- matrix(D_psi_vec, byrow=F, ncol=length(psi_hat_CT) + length(psi_hat_TOT) - 1)
+  
+  
+  
+  fit <- c()
+  tau_vec <- c()
+  for (a_curr in 0:(length(t_a_vec)-1)){
+    df_temp <- df %>% filter( .$ti > t_a_vec[[a_curr+1]]) %>% 
+      calculate_tau_k(psi_hat_list=psi_hat_list, prm=prm, a_k=a_curr)
+    fit <- c(fit, df_temp[[paste0('fit_', a_curr)]])
+    tau_vec <- c(tau_vec, df_temp$tau_k)
+  }
+  
+  
+  Jbb_vec <- c()
+  for(i in 1:dim(D)[2]){
+    for(j in 1:dim(D)[2]){
+      Jbb_vec <- c(Jbb_vec, sum(D[,i]*D[,j]*fit*(1-fit)))
+    }
+  }
+  Jbb <- matrix(Jbb_vec, nrow=sqrt(length(Jbb_vec)), byrow=T)
+  
+  
+  #Jtt <- df %>% calculate_hessian(prm=prm, psi_hat_list=psi_hat_list)
+  
+  Jtt <- t(sapply(1:dim(D_psi)[[2]], function(i){
+           sapply(1:dim(D_psi)[[2]], function(j){
+              sum(D_psi[,i]*D_psi[,j]*fit*(1-fit))
+              #sum(D_psi[,i]*D_psi[,j]*tau_vec*tau_vec*fit*(1-fit))
+            })
+          }))
+  
+  Jtb <- t(sapply(1:dim(D_psi)[[2]], function(i){
+            sapply(1:dim(D)[[2]], function(j){
+              sum(D_psi[,i]*D[,j]*fit*(1-fit))
+              #sum(D_psi[,i]*D[,j]*tau_vec*fit*(1-fit))
+            })
+          }))
+  
+  
+  JTT <- Jtt - Jtb%*%solve(Jbb)%*%t(Jtb)
+  
+  Jacobian <- df %>% calculate_jacobian(prm=prm, psi_hat_list=psi_hat_list)
+  J_inv <- solve(Jacobian)
+  
+  (VCV <- J_inv %*% JTT %*% t(J_inv))
+  
+  return(VCV)
+}
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+### OBSOLETE FUNCTIONS ###
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+create_m_k_map <- function(t_df){
+  a_val_curr <- 0
+  m_k_map <- c(0)
+  for (i in 1:nrow(t_df)){
+    time_row <- t_df[i,]
+    if (time_row$a_val > a_val_curr){
+      m_k_map <- c(m_k_map, i-1)
+      a_val_curr <- time_row$a_val
+    }
+  }
+  return(m_k_map)
+}
+
 calculate_hessian <- function(df, prm, psi_hat_list){
   
   t_df <- prm$t_df
@@ -591,7 +762,7 @@ calculate_hessian <- function(df, prm, psi_hat_list){
           }
         }
       }
-        
+      
       hessian_vec <- c(hessian_vec, denom)
     }
   }
@@ -600,12 +771,6 @@ calculate_hessian <- function(df, prm, psi_hat_list){
 }
 
 
-
-
-
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-### ESTIMATION ###
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 newton_raphson_psi <- function(df, t_df,
                                psi_start, psi_choose=0, 
                                tol=0.001, max_iter=20, psi_max = 10){
@@ -714,62 +879,6 @@ newton_raphson_iterative <- function(df, t_df,
   
   return(list(psi_current, steps, follow_df, fail_flag_iter))
 }
-
-
-
-
-
-
-newton_raphson_grad <- function(df, prm,
-                                psi_start_list=NA, 
-                                tol=0.001, max_iter=20, psi_max = 10){
-  t_psi_vec <- prm$t_psi_vec
-  xi_vec <- prm$xi_vec
-  
-  if(is.na(psi_start_list)) {
-    psi_start_list <- list(rep(0, length(t_psi_vec)),
-                            rep(0, length(xi_vec)))
-  }
-  
-  t_df <- prm$t_df
-  
-  psi_hat_list <- psi_start_list
-  psi_old_list <- psi_hat_list
-  steps <- 1L
-  fail_flag <- F
-  
-  while(((sum(abs(unlist(psi_hat_list) - unlist(psi_old_list))) > tol) | steps == 1) &
-        (steps <= max_iter) & (max(abs(unlist(psi_hat_list))) < psi_max)){
-    
-    psi_old_list <- psi_hat_list
-    
-    S_vec <- df %>% calculate_score(prm=prm, psi_hat_list=psi_hat_list)
-    J <- df %>% calculate_jacobian(prm=prm, psi_hat_list=psi_hat_list)
-
-    
-    psi_hat_vec <- psi_hat_list[[1]]
-    if (length(psi_hat_list[[2]]) > 1){
-      psi_hat_vec <- c(psi_hat_vec, psi_hat_list[[2]][2:length(psi_hat_list[[2]])])
-    }
-    
-    psi_hat_vec <- solve(J, S_vec) + psi_hat_vec
-    psi_hat_list <- list(psi_hat_vec[1:length(t_psi_vec)],
-                          c(0, if(length(psi_hat_vec) > length(t_psi_vec)){
-                                  psi_hat_vec[(length(t_psi_vec)+1):length(psi_hat_vec)]}
-                            else{c()}))
-    psi_hat_vec
-    
-    steps <- steps + 1
-  }
-  
-  if (max(abs(unlist(psi_hat_list))) > psi_max){
-    fail_flag <- T
-  }
-  return(list(psi_hat_list, steps, fail_flag))
-}
-
-
-
 
 calculate_variance_OLD <- function(df, psi_hat, t_a_vec, t_psi_vec, t_df){
   
@@ -880,116 +989,6 @@ calculate_variance_OLD <- function(df, psi_hat, t_a_vec, t_psi_vec, t_df){
   return(solve(Stp)%*%JTT%*%t(solve(Stp)))
 }
 
-
-
-calculate_variance <- function(df, psi_hat_list, prm){
-  
-  t_a_vec <- prm$t_a_vec
-  t_psi_vec <- prm$t_psi_vec
-  xi_vec <- prm$xi_vec
-  
-  t_df <- prm$t_df
-  
-  psi_hat_CT <- psi_hat_list[[1]]
-  psi_hat_TOT <- psi_hat_list[[2]]
-  
-  D_vec <- c()
-  row_count <- 0
-  for (i in 0:(length(t_a_vec)-1)) {
-    for (j in -1:(i-1)){
-      for (k in 0:(length(t_a_vec)-1)) {
-        df_temp <- df %>% filter( .$ti > t_a_vec[[k+1]])
-        nk <- nrow(df_temp)
-        if (k == i) {
-          if (j == -1){
-            D_vec <- c(D_vec, rep(1, nk))
-          } else {
-            D_vec <-  c(D_vec, df_temp[[paste0('a_', j)]])
-          }
-        } else {
-          D_vec <- c(D_vec, rep(0, nk))
-        }
-      }
-      row_count <- row_count + 1
-    }
-  }
-  D <- matrix(D_vec, nrow=row_count, byrow=T)
-  D <- t(D)
-  
-
-  D_psi_vec <- c()
-  for (j in 1:(length(psi_hat_CT) + length(psi_hat_TOT) - 1)){
-    for (a_curr in 0:(length(t_a_vec)-1)){
-      df_temp <- df %>% filter( .$ti > t_a_vec[[a_curr+1]])
-      
-      if (j <= length(psi_hat_CT)) {
-        psi_choose <- j - 1
-        t_df_psi <- t_df %>% filter( .$psi_counter == psi_choose)
-        if (a_curr %in% t_df_psi$a_val) {
-          D_psi_vec <- c(D_psi_vec, rep(1, dim(df_temp)[[1]]))
-        } else {
-          D_psi_vec <- c(D_psi_vec, rep(0, dim(df_temp)[[1]]))
-        }
-      } else {
-        nu <- j - length(psi_hat_CT)
-        m_k <- sum(t_df$a_val < a_curr)
-        
-        names(df_temp)[names(df_temp)==paste0("w_m", m_k)] <- "w_m_k"
-        df_temp <- df_temp %>% mutate(w_nu = as.integer(w_m_k >= nu))
-        
-        D_psi_vec <- c(D_psi_vec, df_temp$w_nu)
-      }
-    }
-  }
-  D_psi <- matrix(D_psi_vec, byrow=F, ncol=length(psi_hat_CT) + length(psi_hat_TOT) - 1)
-  
-  
-  
-  fit <- c()
-  tau_vec <- c()
-  for (a_curr in 0:(length(t_a_vec)-1)){
-    df_temp <- df %>% filter( .$ti > t_a_vec[[a_curr+1]]) %>% 
-      calculate_tau_k(psi_hat_list=psi_hat_list, prm=prm, a_k=a_curr)
-    fit <- c(fit, df_temp[[paste0('fit_', a_curr)]])
-    tau_vec <- c(tau_vec, df_temp$tau_k)
-  }
-  
-  
-  Jbb_vec <- c()
-  for(i in 1:dim(D)[2]){
-    for(j in 1:dim(D)[2]){
-      Jbb_vec <- c(Jbb_vec, sum(D[,i]*D[,j]*fit*(1-fit)))
-    }
-  }
-  Jbb <- matrix(Jbb_vec, nrow=sqrt(length(Jbb_vec)), byrow=T)
-  
-  
-  #Jtt <- df %>% calculate_hessian(prm=prm, psi_hat_list=psi_hat_list)
-  
-  Jtt <- t(sapply(1:dim(D_psi)[[2]], function(i){
-           sapply(1:dim(D_psi)[[2]], function(j){
-              sum(D_psi[,i]*D_psi[,j]*tau_vec*tau_vec*fit*(1-fit))
-            })
-          }))
-  
-  Jtb <- t(sapply(1:dim(D_psi)[[2]], function(i){
-            sapply(1:dim(D)[[2]], function(j){
-              sum(D_psi[,i]*D[,j]*tau_vec*fit*(1-fit))
-            })
-          }))
-  
-  
-  JTT <- Jtt - Jtb%*%solve(Jbb)%*%t(Jtb)
-  
-  Jacobian <- df %>% calculate_jacobian(prm=prm, psi_hat_list=psi_hat_list)
-  J_inv <- solve(Jacobian)
-  
-  return(J_inv %*% JTT %*% t(J_inv))
-}
-
-
-
-
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 ### SPOOKY TESTING REALM ###
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -1059,16 +1058,26 @@ test_plot_1 <- function(x_coords = seq(-2, 2, 0.2), y_coords = seq(-2, 2, 0.2)){
 
 test_zone <- function(){
   
-  psi_star_CT <- c(log(2))
-  t_psi_vec <- c(0)
-  psi_star_TOT <- c(0, log(1.5))
-  xi_vec <- c(0, 30)
-  t_a_vec  <- c(0, 30)
+  # psi_star_CT <- c(log(2))
+  # t_psi_vec <- c(0)
+  # psi_star_TOT <- c(0, log(1.5))
+  # xi_vec <- c(0, 30)
+  # t_a_vec  <- c(0, 30)
+  # 
+  # n <- 20
+  # t0_min <- 10
+  # t0_max <- 100
+  # sims <- 10
   
-  n <- 20
+  psi_star_CT = c(log(2), log(1.5)) 
+  t_psi_vec = c(0, 30)
+  psi_star_TOT = c(0)
+  xi_vec = c(0)
+  t_a_vec  = c(0, 30)
+  n = 100
   t0_min <- 10
   t0_max <- 100
-  sims <- 10
+  sims=100
   
   prm <- list(psi_star_CT=psi_star_CT, 
               t_psi_vec=t_psi_vec,
@@ -1124,7 +1133,6 @@ nr_run <- function(psi_star_CT, t_psi_vec,
                     .export=c("create_sample", "fit_treatment_models",
                               "calculate_tau_k", "calculate_tau_rsd",
                               "calculate_tau_rsd_m", "calculate_jacobian", 
-                              "calculate_hessian",
                               "calculate_score", "newton_raphson_grad",
                               "calculate_variance"),
                     .packages="tidyverse") %dopar%
@@ -1159,19 +1167,38 @@ nr_run <- function(psi_star_CT, t_psi_vec,
       next
     }
     
-    cat(psi_lab, "\n",
-        paste(
-          format(c(psi_star_comb[[j]], 
-                   mean(nr_out[,j], na.rm=T))
-                 , digits = 5),
-          collapse = "\t"),
-        "\n",
-        paste(
-          format(c(var(nr_out[,j]),
+    # cat(psi_lab, "\n",
+    #     paste(
+    #       format(c(psi_star_comb[[j]], 
+    #                mean(nr_out[,j], na.rm=T))
+    #              , digits = 5),
+    #       collapse = "\t"),
+    #     "\n",
+    #     paste(
+    #       format(c(var(nr_out[,j]),
+    #                mean(nr_out[,var_index], na.rm=T))
+    #              , digits = 5),
+    #       collapse = "\t"),
+    #     "\n")
+    
+    
+    cat(
+      paste(psi_lab, "\t", "MEAN", "\t\t", "VAR", collapse="\t"),
+      "\n",
+      paste(
+        c("TRU",
+          format(c(psi_star_comb[[j]],
+                   var(nr_out[,j]))
+                 , nsmall=5)),
+        collapse = "\t"),
+      "\n",
+      paste(
+        c("EST",
+          format(c(mean(nr_out[,j] , na.rm=T),
                    mean(nr_out[,var_index], na.rm=T))
-                 , digits = 5),
-          collapse = "\t"),
-        "\n")
+                 , nsmall=5)),
+        collapse = "\t"),
+      "\n")
   }
   
   #return(NULL)
@@ -1181,24 +1208,24 @@ nr_run <- function(psi_star_CT, t_psi_vec,
 ### MAIN # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-# 1 CT, 0 TOT
+# 0 CT, 0 TOT
 nr_run(psi_star_CT = c(log(2)), 
        t_psi_vec = c(0),
        psi_star_TOT = c(0),
        xi_vec = c(0),
        t_a_vec  = c(0, 30),
        n = 200,
-       sims=1000
+       sims=100
 )
 
-# 1 CT, 1 TOT
+# 0 CT, 1 TOT
 nr_run(psi_star_CT = c(log(2)), 
        t_psi_vec = c(0),
        psi_star_TOT = c(0, log(1.5)),
        xi_vec = c(0, 30),
        t_a_vec  = c(0, 30),
-       n = 1000,
-       sims=2000
+       n = 200,
+       sims=100
 )
 
 nr_run(psi_star_CT = c(log(2)), 
@@ -1209,6 +1236,38 @@ nr_run(psi_star_CT = c(log(2)),
        n = 1000,
        sims=1000
 )
+
+
+# 1 CT, 0 TOT
+# CT changes at t_a
+nr_run(psi_star_CT = c(log(2), log(1.5)), 
+       t_psi_vec = c(0, 30),
+       psi_star_TOT = c(0),
+       xi_vec = c(0),
+       t_a_vec  = c(0, 30),
+       n = 200,
+       sims=100
+)
+#CT changes after t_a
+nr_run(psi_star_CT = c(log(2), log(1.5)), 
+       t_psi_vec = c(0, 50),
+       psi_star_TOT = c(0),
+       xi_vec = c(0),
+       t_a_vec  = c(0, 30),
+       n = 200,
+       sims=100
+)
+#CT changes before t_a
+nr_run(psi_star_CT = c(log(2), log(1.5)), 
+       t_psi_vec = c(0, 30),
+       psi_star_TOT = c(0),
+       xi_vec = c(0),
+       t_a_vec  = c(0, 50),
+       n = 200,
+       sims=100
+)
+
+
 
 
 
