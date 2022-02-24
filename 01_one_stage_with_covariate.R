@@ -254,7 +254,7 @@ nr_run(psi_star_0 = c(log(2)),
        prb_a_x0 = 0.4,
        prb_a_x1 = 0.6,
        #t_a_vec  = c(0, 30),
-       n = 40,
-       sims=1000
+       n = 80,
+       sims=10000
 )
  

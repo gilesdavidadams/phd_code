@@ -304,5 +304,5 @@ nr_run(psi_star_0=log(2),
        t_a=30,
        t0_min = 10,
        t0_max = 100,
-       n = 200,
-       sims = 10000)
+       n = 5000,
+       sims = 2000)

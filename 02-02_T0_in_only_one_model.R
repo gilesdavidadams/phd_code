@@ -25,7 +25,7 @@ create_sample <- function(prm){
                        rep(0, x_size), rep(1, n - (a0_size + a1_size + x_size)))) %>%
       add_column(t0  = runif(n, min=t0_min, max=t0_max )) %>%
       mutate(ti = 0, t0_rsd = t0,
-             g_psi = psi_star_vec[[1]] + x*psi_star_vec[[2]],
+             g_psi = psi_star_vec[[1]],
              temp = pmin((t_a - 0)*exp(-g_psi*a_0), t0_rsd),
              ti = ti + temp*exp(g_psi*a_0),
              t0_rsd = t0_rsd - temp,
@@ -41,7 +41,7 @@ create_sample <- function(prm){
 
 fit_treatment_models <- function(df, prm){
   with(prm, {
-    df <- df %>% mutate(fit_a0 = glm(a_0 ~ x, family=binomial)$fitted.values)
+    df <- df %>% mutate(fit_a0 = glm(a_0 ~ 1, family=binomial)$fitted.values)
     
     mdl_formula <- "a_1 ~ a_0 + x"
     model_temp <- with(df %>% filter(.$ti > t_a), 
@@ -60,7 +60,7 @@ calculate_tau_k <- function(df, prm, psi_hat_vec,  a_k=0, ...){
                         tau_k = exp(-g_psi*a_1)*ti_temp)
     if (a_k == 0) {
       df <- df %>% mutate(ti_temp = pmax(pmin(t_a, ti), 0),
-                          g_psi = psi_hat_vec[[1]] + psi_hat_vec[[2]]*x, 
+                          g_psi = psi_hat_vec[[1]], 
                           tau_k = tau_k + exp(-g_psi*a_0)*ti_temp)
     } else {
       #a_k == 1
@@ -77,12 +77,12 @@ calculate_tau_rsd_m <- function(df, prm,
                                 m=0, ...){
   with(prm, {
     if (m == 0) {
-      df <- df %>% mutate(g_psi = psi_hat_vec[[1]] + psi_hat_vec[[2]]*x,
+      df <- df %>% mutate(g_psi = psi_hat_vec[[1]],
                           ti_temp = pmax(0, pmin(t_a, ti) - 0),
                           tau_rsd = ti_temp*exp(-g_psi*a_0)
       )
     } else {
-      df <- df %>% mutate(g_psi = psi_hat_vec[[1]] + psi_hat_vec[[2]]*x,
+      df <- df %>% mutate(g_psi = psi_hat_vec[[1]] + psi_hat_vec[[2]]*a_0,
                           ti_temp = pmax(0, ti - t_a),
                           tau_rsd = ti_temp*exp(-g_psi*a_1) 
       )
@@ -96,14 +96,18 @@ calculate_tau_rsd_m <- function(df, prm,
 }
 
 calculate_score <- function(df, prm, psi_hat_vec){
-  
-  df_temp <- df %>% calculate_tau_k(prm=prm, psi_hat_vec=psi_hat_vec, a_k=1)
-  S_0 <- with(df_temp, sum((a_1 - fit_a1)*tau_k))
-  S_1 <- with(df_temp, sum((a_1 - fit_a1)*tau_k*x))
+  S_0 <- 0
+  S_1 <- 0
   
   df_temp <- df %>% calculate_tau_k(prm=prm, psi_hat_vec=psi_hat_vec, a_k=0)
   S_0 <- S_0 + with(df_temp, sum((a_0 - fit_a0)*tau_k))
-  S_1 <- S_1 + with(df_temp, sum((a_0 - fit_a0)*tau_k*x))
+  #S_1 <- S_1 + with(df_temp, sum((a_0 - fit_a0)*tau_k*x))
+  
+  df_temp <- df %>% calculate_tau_k(prm=prm, psi_hat_vec=psi_hat_vec, a_k=1)
+  #S_0 <- S_0 + with(df_temp, sum((a_1 - fit_a1)*tau_k))
+  S_1 <- S_1 + with(df_temp, sum((a_1 - fit_a1)*tau_k*x))
+  
+
   
   S_vec <- c(S_0, S_1)
   
@@ -116,22 +120,18 @@ calculate_jacobian <- function(df, prm, psi_hat_vec){
   
   jacobi_vec <- with(df_0, c(
     sum((a_0 - fit_a0)*tau_rsd*a_0),
-    sum((a_0 - fit_a0)*tau_rsd*x*a_0),
-    sum((a_0 - fit_a0)*tau_rsd*x*a_0),
-    sum((a_0 - fit_a0)*tau_rsd*x*x*a_0)
+    0,
+    0,
+    0
   ))
   
   df_1 <- df %>% calculate_tau_rsd_m(prm=prm, psi_hat_vec=psi_hat_vec, m=1)
   
   jacobi_vec <- jacobi_vec + with(df_1, c(
-    sum((a_0 - fit_a0)*tau_rsd*a_1 + 
-          (a_1 - fit_a1)*tau_rsd*a_1),
-    sum((a_0 - fit_a0)*tau_rsd*a_1*x + 
-          (a_1 - fit_a1)*tau_rsd*a_1*x),    
-    sum((a_0 - fit_a0)*tau_rsd*a_1*x + 
-          (a_1 - fit_a1)*tau_rsd*a_1*x),
-    sum((a_0 - fit_a0)*tau_rsd*a_1*x*x + 
-          (a_1 - fit_a1)*tau_rsd*a_1*x*x)
+    0,
+    0,
+    0,
+    sum((a_1 - fit_a1)*tau_rsd*a_1*x*x)
   ))
   
   return(matrix(jacobi_vec, byrow=T, nrow=2))
@@ -147,15 +147,15 @@ calculate_variance <- function(df, prm, psi_hat_vec){
   n_1 <- dim(df_1)[[1]]
   
   D_vec <- c(rep(1, n_0), rep(0, n_1),
-             df_0$x, rep(0, n_1),
+             #df_0$x, rep(0, n_1),
              rep(0, n_0), rep(1, n_1),
              rep(0, n_0), df_1$a_0,
              rep(0, n_0), df_1$x)
-  D <- matrix(D_vec, ncol=5, byrow=F)
+  D <- matrix(D_vec, ncol=4, byrow=F)
   
   
-  D_theta_vec <- c(rep(1, n_0 + n_1),
-                   df_0$x, df_1$x)
+  D_theta_vec <- c(rep(1, n_0), rep(0, n_1),
+                   rep(0, n_0), df_1$x)
   D_theta <- matrix(D_theta_vec, byrow=F, ncol=2)
   
   fit <- c(df_0$fit_a0, df_1$fit_a1)
@@ -261,11 +261,12 @@ nr_run <- function(psi_star_0=log(2),
       nri_out <- df %>% newton_raphson_grad(prm=prm)
       psi_hat_vec <- nri_out[[1]]
       
-      (var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm))
-      
-      score <- df %>% calculate_score(prm=prm, psi_hat_vec=psi_hat_vec)
-      
-      c(psi_hat_vec, diag(var_hat), score)
+      if(sum(is.na(psi_hat_vec)) >= 1){
+        var_hat <- matrix(c(NA, NA, NA, NA), ncol=2)    
+      } else {
+        (var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm))
+      }
+      c(psi_hat_vec, diag(var_hat))
       #c(unlist(psi_hat_list), diag(var_hat))
     }
   

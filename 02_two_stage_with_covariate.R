@@ -82,7 +82,7 @@ calculate_tau_rsd_m <- function(df, prm,
                           tau_rsd = ti_temp*exp(-g_psi*a_0)
       )
     } else {
-      df <- df %>% mutate(g_psi = psi_hat_vec[[1]] + psi_hat_vec[[2]]*x,
+      df <- df %>% mutate(g_psi = psi_hat_vec[[1]] + psi_hat_vec[[2]]*a_0,
                           ti_temp = pmax(0, ti - t_a),
                           tau_rsd = ti_temp*exp(-g_psi*a_1) 
       )
@@ -92,7 +92,7 @@ calculate_tau_rsd_m <- function(df, prm,
     
     return(df )
   })
-  
+
 }
 
 calculate_score <- function(df, prm, psi_hat_vec){
@@ -119,15 +119,15 @@ calculate_jacobian <- function(df, prm, psi_hat_vec){
     sum((a_0 - fit_a0)*tau_rsd*x*a_0),
     sum((a_0 - fit_a0)*tau_rsd*x*a_0),
     sum((a_0 - fit_a0)*tau_rsd*x*x*a_0)
-  ))
+    ))
   
   df_1 <- df %>% calculate_tau_rsd_m(prm=prm, psi_hat_vec=psi_hat_vec, m=1)
   
   jacobi_vec <- jacobi_vec + with(df_1, c(
     sum((a_0 - fit_a0)*tau_rsd*a_1 + 
-          (a_1 - fit_a1)*tau_rsd*a_1),
+        (a_1 - fit_a1)*tau_rsd*a_1),
     sum((a_0 - fit_a0)*tau_rsd*a_1*x + 
-          (a_1 - fit_a1)*tau_rsd*a_1*x),    
+        (a_1 - fit_a1)*tau_rsd*a_1*x),    
     sum((a_0 - fit_a0)*tau_rsd*a_1*x + 
           (a_1 - fit_a1)*tau_rsd*a_1*x),
     sum((a_0 - fit_a0)*tau_rsd*a_1*x*x + 
@@ -263,9 +263,7 @@ nr_run <- function(psi_star_0=log(2),
       
       (var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm))
       
-      score <- df %>% calculate_score(prm=prm, psi_hat_vec=psi_hat_vec)
-      
-      c(psi_hat_vec, diag(var_hat), score)
+      c(psi_hat_vec, diag(var_hat))
       #c(unlist(psi_hat_list), diag(var_hat))
     }
   
