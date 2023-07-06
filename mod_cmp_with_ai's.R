@@ -273,7 +273,6 @@ calculate_jacobian <- function(df, prm, psi_hat_vec){
             
             df_k <- df %>% calculate_tau_k(prm=prm, psi_hat_vec=psi_hat_vec, a_k=a_curr) 
             
-            
             for (m in (a_curr:(length(t_a_vec)-1))) {
               if ((beta_track_row[[m+1]] == i) &&
                   (beta_track_col[[m+1]] == j)) {
@@ -565,8 +564,23 @@ nr_out <- nr_run(prm=prm)
 
 
 
-prm$sim_label <- "(const_1) -> (const_2, a_0)"
+prm$sim_label <- "(const_1) -> (const_1, x)"
 prm$t_a_vec <- c(0, 30)
+prm$beta_1_track <- c(1, 1)
+prm$beta_x_track <- c(0, 1)
+prm$beta_a0_track <- c(0, 0)
+prm$psi_lab <- c("psi_1", "psi_a0")
+prm$psi_1_star <- c(log(2))
+prm$psi_x_star <- c(log(1.5))
+prm$psi_a0_star <- c()
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star, prm$psi_a0_star)
+prm$sims <- 1000
+nr_out <- nr_run(prm=prm)
+
+
+
+prm$sim_label <- "(const_1) -> (const_2, a_0)"
+prm$t_a_vec <- c(0, 60)
 prm$beta_1_track <- c(1, 2)
 prm$beta_x_track <- c(0, 0)
 prm$beta_a0_track <- c(0, 1)
@@ -575,10 +589,9 @@ prm$psi_1_star <- c(log(2), log(2))
 prm$psi_x_star <- c()
 prm$psi_a0_star <- c(log(1.5))
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star, prm$psi_a0_star)
-prm$sims <- 5000
+prm$sims <- 1000
+prm$n_trgt <- 4800
 nr_out <- nr_run(prm=prm)
-
-
 
 
 prm$sim_label <- "(const_1) -> (const_2, x)"
@@ -780,6 +793,56 @@ nr_run(psi_star_CT = c(log(1.5), log(2), log(1.2)),
        n = 1000,
        sims=1000
 )
+
+
+
+
+
+prm$sim_label <- "(const_1) -> (const_1, a_0) -> (const_1)"
+prm$t_a_vec <- c(0, 30, 60)
+prm$beta_1_track <- c(1, 1, 1)
+prm$beta_x_track <- c(0, 0, 0)
+prm$beta_a0_track <- c(0, 1, 0)
+prm$psi_lab <- c("psi_1", "psi_a0")
+prm$psi_1_star <- c(log(2))
+prm$psi_x_star <- c()
+prm$psi_a0_star <- c(log(1.5))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star, prm$psi_a0_star)
+prm$sims <- 2000
+prm$n_trgt <- 1600
+nr_out <- nr_run(prm=prm)
+
+prm$sim_label <- "(const_1) -> (const_1, x_0) -> (const_1)"
+prm$t_a_vec <- c(0, 30, 60)
+prm$beta_1_track <- c(1, 1, 1)
+prm$beta_x_track <- c(0, 1, 0)
+prm$beta_a0_track <- c(0, 0, 0)
+prm$psi_lab <- c("psi_1", "psi_x0")
+prm$psi_1_star <- c(log(2))
+prm$psi_x_star <- c(log(1.5))
+prm$psi_a0_star <- c()
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star, prm$psi_a0_star)
+prm$sims <- 2000
+prm$n_trgt <- 1600
+nr_out <- nr_run(prm=prm)
+
+prm$sim_label <- "(const_1) -> (const_1) -> (const_1, a_0)"
+prm$t_a_vec <- c(0, 30, 60)
+prm$beta_1_track <- c(1, 1, 1)
+prm$beta_x_track <- c(0, 0, 0)
+prm$beta_a0_track <- c(0, 0, 1)
+prm$psi_lab <- c("psi_1", "psi_a0")
+prm$psi_1_star <- c(log(2))
+prm$psi_x_star <- c()
+prm$psi_a0_star <- c(log(1.5))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star, prm$psi_a0_star)
+prm$sims <- 2000
+prm$n_trgt <- 1600
+nr_out <- nr_run(prm=prm)
+
+
+
+
 
 
 
