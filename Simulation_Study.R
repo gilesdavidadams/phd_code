@@ -594,6 +594,67 @@ print_results <- function(results_vec, prm){
 
 
 
+one_factor_bias_analysis <- function(sims=3000, 
+                                         n_trgt_vec = c(100, 400, 800, 2000)){
+  
+  prm <- list() 
+  
+  prm$sims <- sims
+  
+  prm$sim_label <- "(const_1) -> (const_2)"
+  prm$t_a_vec <- c(0, 35)
+  prm$expmean <- 50
+  prm$beta_1_track <- c(1, 1)
+  prm$beta_x_track <- c(0, 0)
+  prm$psi_lab <- c("psi_1", "psi_2")
+  prm$psi_1_star <- c(-log(2))
+  prm$psi_x_star <- c()
+  prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+  prm$censor_date <- 80
+  
+  results_df <- tibble(n_trgt=numeric(), psi_hat=numeric(),
+                    censor=logical())
+  censor_vec <- c(T,F)
+  for(censor_val in censor_vec){
+    prm$censor <- censor_val
+    for(n_trgt in n_trgt_vec){
+      print(n_trgt)
+      prm$n_trgt <- n_trgt
+      
+      nr_out_list <- nr_run(prm=prm)
+      results_vec <- nr_out_list$results_vec
+      
+      results_df <- results_df %>% add_row(n_trgt=prm$n_trgt,
+                                           censor=prm$censor,
+                                           psi_hat=results_vec[1]
+      )
+      
+    }
+  }
+  
+  #mutate(var_type = replace(var_type, var_type=='asymp_var', 'Mean asymptotic variance'),
+  #       var_type = replace(var_type, var_type=='asymp_var', sample_var='Sample variance of the sample means')) %>%
+  
+  results_df %>% 
+    ggplot(aes(x=n_trgt, y=psi_hat, line_style=censor)) + 
+    geom_line(aes(linetype=censor)) + labs(x='n', y='psi-hat sample mean')
+    #rename('Sample variance of the sample means'=sample_var,
+    #       'Mean asymptotic variance'=asymp_var) %>%
+    #pivot_longer(cols = !n_trgt, names_to = "var_type", values_to = "variance") %>% 
+    #ggplot(aes(x=n_trgt, y=variance, colour=var_type, line_style=var_type)) + 
+    #geom_line(aes(linetype=var_type)) + labs(x='n') + 
+    #theme(legend.title = element_blank())
+  
+  #var_df %>% pivot_longer(cols = !n_trgt, names_to = "var_type", values_to = "variance") %>%
+  #  ggplot(aes(x=n_trgt)) + 
+  #  geom_line(aes(y=variance), group_by = var_type)
+  #geom_line(aes(y=asymp_var), color = "steelblue", linetype="dashed") +
+  #geom_line(aes(y=sample_var), color = "darkred")
+  
+  
+  return(results_df)
+}
+
 
 two_factor_variance_analysis <- function(sims=3000, 
                                          n_trgt_vec = c(100, 400, 800, 2000)){
@@ -675,7 +736,7 @@ prm <- list()
 #           (1) -> (1) block                            #   ##
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
 ##################################################################
-
+  
 
 prm$sim_label <- "(const_1) -> (const_1)"
 prm$t_a_vec <- c(0, 35)
