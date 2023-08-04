@@ -79,84 +79,67 @@ create_sample <- function(prm){
   return(df)
 }
 
-fit_treatment_models <- function(df, prm){
-  with(prm, {
-    df <- df %>% mutate(fit_0 = glm(a_0 ~ 1 + x, family=binomial)$fitted.values)
-    
-    if(length(t_a_vec) > 1){
-      for(i in 1:(length(t_a_vec)-1)){
-        mdl_formula <- paste0("a_", i, "~ 1 + x +  ",
-                              paste0("a_", 0:(i-1), collapse="+"))
-        model_temp <- with(df %>% filter(.$ti > t_a_vec[[i+1]]), 
-                           glm(  as.formula(mdl_formula),
-                                 family=binomial))
-        df$fit_temp <- predict(model_temp, newdata = df, type="response")
-        names(df)[names(df) == "fit_temp"] <- paste0("fit_", i)
-      }
-    }
-    
-    return(df)
-  })
-}
-
-
 calculate_tau_k <- function(df, psi_hat_vec, prm,  a_k=0, ...){
   #by default calculates tau(0) aka T0 from trial start
   
-    t_a <- prm$t_a_vec[[a_k+1]]
-    
-    df <- df %>% filter(.$ti > t_a)%>% 
-      mutate(ti_rsd = ti - t_a,
-             tau_k = 0)
-    
-    if (prm$censor) {
-      df <- df %>% mutate(
-        C_rsd = C_i - t_a,
-        C_k = 0
-      )
-    }
-    
-    for (i in (a_k+1):length(prm$t_a_vec)){
-      
-      t_curr <- prm$t_a_vec[[i]]
-      t_next <- ifelse(i < length(prm$t_a_vec), prm$t_a_vec[[i+1]] , Inf)
-      beta_1_now <- ifelse(prm$beta_1_track[[i]]==0, 0, 
-                           psi_hat_vec[[prm$beta_1_track[[i]]]])
-      beta_x_now <- ifelse(prm$beta_x_track[[i]]==0, 0, 
-                           psi_hat_vec[[prm$beta_x_track[[i]]+length(prm$psi_1_star)]])
-      
-      names(df)[names(df)==paste0("a_", i-1)] <- "a_curr"
-      
-      df <- df %>% mutate(
-        g_psi =  beta_1_now + x*beta_x_now,
-        ti_temp = pmin(t_next - t_curr, ti_rsd),
-        tau_k = tau_k + ti_temp*exp(-g_psi*a_curr),
-        ti_rsd = ti_rsd - ti_temp
-      )
-      
-      if (prm$censor) {
-        t_next <- ifelse(i < length(prm$t_a_vec), 
-                         prm$t_a_vec[[i+1]], 
-                         prm$censor_date)
-        df <- df %>% mutate(
-          C_psi = ifelse(g_psi < 0, 1, exp(-g_psi)),
-          C_k = C_k + pmin(t_next - t_curr, C_rsd)*C_psi,
-          C_rsd = C_rsd - pmin(t_next - t_curr, C_rsd)
-        )
-      }
-      
-      names(df)[names(df)=="a_curr"] <- paste0("a_", i-1) 
-      
-    }
-    if (prm$censor) {
-      df <- df %>% mutate(tau_k_un = tau_k,
-                          delta_k = ifelse(tau_k < C_k, 0, 1),
-                          tau_k = pmin(tau_k, C_k))
-      return(select(df, -c(ti_temp, ti_rsd, g_psi, C_rsd, C_k, C_psi, tau_k_un)))
-    } else {
-      return(select(df, -c(ti_temp, ti_rsd, g_psi)))
-    }
+  t_a <- prm$t_a_vec[[a_k+1]]
+  
+  df <- df %>% filter(.$ti > t_a)%>% 
+    mutate(ti_rsd = ti - t_a,
+           tau_k = 0)
+  
+  if (prm$censor) {
+    df <- df %>% mutate(
+      C_rsd = C_i - t_a,
+      C_k = 0
+    )
   }
+  
+  for (i in (a_k+1):length(prm$t_a_vec)){
+    
+    t_curr <- prm$t_a_vec[[i]]
+    t_next <- ifelse(i < length(prm$t_a_vec), prm$t_a_vec[[i+1]] , Inf)
+    beta_1_now <- ifelse(prm$beta_1_track[[i]]==0, 0, 
+                         psi_hat_vec[[prm$beta_1_track[[i]]]])
+    beta_x_now <- ifelse(prm$beta_x_track[[i]]==0, 0, 
+                         psi_hat_vec[[prm$beta_x_track[[i]]+length(prm$psi_1_star)]])
+    
+    names(df)[names(df)==paste0("a_", i-1)] <- "a_curr"
+    
+    df <- df %>% mutate(
+      g_psi =  beta_1_now + x*beta_x_now,
+      ti_temp = pmin(t_next - t_curr, ti_rsd),
+      tau_k = ifelse(is.na(a_curr), tau_k, tau_k + ti_temp*exp(-g_psi*a_curr)),
+      ti_rsd = ti_rsd - ti_temp,
+      
+    )
+    
+    if (prm$censor) {
+      t_next <- ifelse(i < length(prm$t_a_vec), 
+                       prm$t_a_vec[[i+1]], 
+                       prm$censor_date)
+      df <- df %>% mutate(
+        C_psi = ifelse(g_psi < 0, 1, exp(-g_psi)),
+        C_k = C_k + pmin(t_next - t_curr, C_rsd)*C_psi,
+        C_rsd = C_rsd - pmin(t_next - t_curr, C_rsd)
+      )
+    }
+    
+    names(df)[names(df)=="a_curr"] <- paste0("a_", i-1)
+    
+    
+    #cat("i=",i,"\n na=", sum(is.na(df$tau_k)))
+    
+  }
+  if (prm$censor) {
+    df <- df %>% mutate(tau_k_un = tau_k,
+                        delta_k = ifelse(tau_k < C_k, 0, 1),
+                        tau_k = pmin(tau_k, C_k))
+    return(select(df, -c(ti_temp, ti_rsd, g_psi, C_rsd, C_k, C_psi, tau_k_un)))
+  } else {
+    return(select(df, -c(ti_temp, ti_rsd, g_psi)))
+  }
+}
 
 calculate_tau_rsd_m <- function(df, prm, 
                                 psi_hat_vec,
@@ -175,7 +158,7 @@ calculate_tau_rsd_m <- function(df, prm,
     df <- df %>% mutate(
       g_psi =  beta_1_now + x*beta_x_now,
       ti_temp = pmax(0, pmin(t_next, ti) - t_curr),
-      tau_rsd = ti_temp*exp(-g_psi*a_curr)
+      tau_rsd =  ifelse(is.na(a_curr), 0, ti_temp*exp(-g_psi*a_curr))
     )
     
     names(df)[names(df)=="a_curr"] <- paste0("a_", m)
@@ -184,7 +167,6 @@ calculate_tau_rsd_m <- function(df, prm,
   })
   
 }
-
 
 calculate_C_m <- function(psi_hat_vec, prm, m=0){
   #,a_k=0, j=1){
@@ -197,13 +179,15 @@ calculate_C_m <- function(psi_hat_vec, prm, m=0){
   
   beta_1_now <- ifelse(prm$beta_1_track[[m+1]]==0, 0,
                        psi_hat_vec[[prm$beta_1_track[[m+1]]]])
- 
-   C_m <- exp(-beta_1_now*as.integer(beta_1_now >= 0))*(t_next - t_now)
+  beta_x_now <- ifelse(prm$beta_x_track[[m+1]]==0, 0,
+                       psi_hat_vec[[prm$beta_x_track[[m+1]]+length(prm$psi_1_star)]])
+  
+  C_m <- exp(-(beta_1_now*(beta_1_now>=0) + beta_x_now*(beta_x_now>=0)))*(t_next - t_now)
   
   #beta_x_now <- ifelse(beta_x_track[[m+1]]==0, 0,
   #                     psi_hat_vec[[beta_x_track[[m+1]]+length(psi_1_star)]])
   #if (beta_1_now >= 0){
-    
+  
   #}
   
   return(C_m)
@@ -232,8 +216,6 @@ calculate_C_k <- function(psi_hat_vec, prm, a_k=0, j){
   
 }
 
-
-
 calculate_score <- function(df, prm, psi_hat_vec){
   
   S_vec <- c()
@@ -248,7 +230,10 @@ calculate_score <- function(df, prm, psi_hat_vec){
         names(df_temp)[names(df_temp)==paste0("a_", a_curr)] <- "a_k"
         names(df_temp)[names(df_temp)==paste0("fit_", a_curr)] <- "fit_k"
         
-        S_curr <- S_curr + with(df_temp, sum((a_k - fit_k)*tau_k))
+        df_temp <- df_temp %>% mutate(S_inc = ifelse(is.na(a_k), 0,
+                                                     (a_k - fit_k)*tau_k))
+        
+        S_curr <- S_curr + with(df_temp, sum(S_inc))
       }
     }
     
@@ -325,7 +310,8 @@ calculate_jacobian <- function(df, prm, psi_hat_vec){
               
               df_k <- df_k %>% mutate(
                 x_wrt = (1 - as.integer(d_wrt == "theta_x")) + x * as.integer(d_wrt == "theta_x"),
-                Si_temp = Si_temp + a_m * x_wrt * tau_rsd)
+                Si_inc = ifelse(is.na(a_m), 0, a_m * x_wrt * tau_rsd),
+                Si_temp = Si_temp + Si_inc)
               
               names(df_k)[names(df_k)=="a_m"] <- paste0("a_", m)
               
@@ -338,13 +324,13 @@ calculate_jacobian <- function(df, prm, psi_hat_vec){
           
           df_k <- df_k %>% mutate(
             x_num = (1 - as.integer(d_num == "theta_x")) + x * as.integer(d_num == "theta_x"),
-
+            
             #C_k = calculate_C_k(psi_hat_vec=psi_hat_vec, prm=prm, a_k=a_curr, j=j)
           )
           if(prm$censor) { 
             df_k <- df_k %>% mutate(
-                      Si_censor = delta_k*dC_dpsi + (1-delta_k)*Si_temp,
-                      #C_k = calculate_C_k(psi_hat_vec=psi_hat_vec, prm=prm, a_k=a_curr)
+              Si_censor = delta_k*dC_dpsi + (1-delta_k)*Si_temp,
+              #C_k = calculate_C_k(psi_hat_vec=psi_hat_vec, prm=prm, a_k=a_curr)
             )
             #df_k <- df_k %>% mutate(Si_censor = delta_k*(psi_hat_vec[[j]] >= 0)*C_k + 
             #                          (1-delta_k)*Si_temp)
@@ -356,7 +342,10 @@ calculate_jacobian <- function(df, prm, psi_hat_vec){
           names(df_k)[names(df_k)==paste0("a_", a_curr)] <- "a_k"
           names(df_k)[names(df_k)==paste0("fit_", a_curr)] <- "fit_k"
           
-          denom <- denom + sum(with(df_k, (a_k - fit_k)*x_num*Si_censor))
+          df_k <- df_k %>% mutate(denom_inc = ifelse(is.na(a_k), 0, 
+                                                     (a_k - fit_k)*x_num*Si_censor))
+          
+          denom <- denom + sum(with(df_k, denom_inc))
         }
       }
       
@@ -366,11 +355,6 @@ calculate_jacobian <- function(df, prm, psi_hat_vec){
   
   return(matrix(jacobi_vec, byrow=T, nrow=jacobi_dim))
 }
-
-
-
-
-
 
 newton_raphson_grad <- function(df, prm,
                                 psi_start_vec=c(0,0), 
@@ -383,6 +367,9 @@ newton_raphson_grad <- function(df, prm,
   
   while(((sum(abs(psi_hat_vec - psi_old_vec)) > tol) | steps == 1) &
         (steps <= max_iter) & (max(abs(psi_hat_vec)) < psi_max)){
+    
+    
+    print(steps)
     
     psi_old_vec <- psi_hat_vec
     
@@ -401,7 +388,6 @@ newton_raphson_grad <- function(df, prm,
   return(list(psi_hat_vec, steps, fail_flag))
 }
 
-
 calculate_variance <- function(df, prm, psi_hat_vec){
   
   n_vec <- c()
@@ -409,9 +395,12 @@ calculate_variance <- function(df, prm, psi_hat_vec){
     n_vec <- c(n_vec, nrow(df %>% filter(.$ti > t_a)))
   }
   
+  progressbar <- txtProgressBar(min=0, max=length(prm$t_a_vec)-1,
+                                style=3, width=50, char="=")
   D_vec <- c()
   col_count <- 0
   for (k in 0:(length(prm$t_a_vec)-1)) {
+    setTxtProgressBar(progressbar, k)
     df_temp <- df %>% filter(.$ti > prm$t_a_vec[[k+1]])
     
     for (sub_col in -2:(k-1)) {
@@ -435,6 +424,7 @@ calculate_variance <- function(df, prm, psi_hat_vec){
     
   }
   D <- matrix(D_vec, ncol=col_count, byrow=F)
+  close(progressbar)
   
   
   D_theta_vec <- c()
@@ -502,6 +492,7 @@ calculate_variance <- function(df, prm, psi_hat_vec){
 }
 
 
+
 nr_run <- function(prm){
   
   cl <- makePSOCKcluster(28)
@@ -544,6 +535,7 @@ nr_run <- function(prm){
   return(list(nr_out=nr_out, results_vec=results_vec, results_df=results_df))
 }
 
+
 calculate_results <- function(nr_out, prm){
   results_vec <- c()
   for (j in 1:length(prm$psi_star_vec)){
@@ -558,29 +550,31 @@ calculate_results <- function(nr_out, prm){
   return(results_vec)
 }
 
+
 calculate_results_df <- function(nr_out, prm){
   
   results_df <- tibble(name=character(), mean=numeric(), var=numeric())
   
   for (j in 1:length(prm$psi_star_vec)){
     results_df <- results_df %>% 
-              add_row(name="true",
-                   mean=prm$psi_star_vec[j]) %>%
-              add_row(name="mean", 
-                      mean=mean(nr_out[,j] , na.rm=T),
-                      var=var(nr_out[,j], na.rm=T)) %>%
-              add_row(name="aVar",
-                      mean=mean(nr_out[,j+length(prm$psi_star_vec)], na.rm=T),
-                      var=var(nr_out[,j+length(prm$psi_star_vec)], na.rm=T))
+      add_row(name="true",
+              mean=prm$psi_star_vec[j]) %>%
+      add_row(name="mean", 
+              mean=mean(nr_out[,j] , na.rm=T),
+              var=var(nr_out[,j], na.rm=T)) %>%
+      add_row(name="aVar",
+              mean=mean(nr_out[,j+length(prm$psi_star_vec)], na.rm=T),
+              var=var(nr_out[,j+length(prm$psi_star_vec)], na.rm=T))
   }
   
   #results_df <- results_df %>% column_to_rownames("name")
   return(results_df)
 }
 
+
 print_results_df <- function(results_df, latex=FALSE){
   
-    if(latex){
+  if(latex){
     results_df %>% gt(rowname_col="name") %>%
       fmt_number(decimals=5) %>%
       as_latex() %>% as.character() %>% cat()
@@ -589,6 +583,7 @@ print_results_df <- function(results_df, latex=FALSE){
   }
   
 }
+
 
 print_results <- function(results_vec, prm){
   cat(#"---------------------------", "\n",
@@ -654,7 +649,7 @@ one_factor_bias_analysis <- function(sims=3000,
   prm$censor_date <- 80
   
   results_df <- tibble(n_trgt=numeric(), psi_hat=numeric(),
-                    censor=logical())
+                       censor=logical())
   censor_vec <- c(T,F)
   for(censor_val in censor_vec){
     prm$censor <- censor_val
@@ -679,12 +674,12 @@ one_factor_bias_analysis <- function(sims=3000,
   results_df %>% 
     ggplot(aes(x=n_trgt, y=psi_hat, line_style=censor)) + 
     geom_line(aes(linetype=censor)) + labs(x='n', y='psi-hat sample mean')
-    #rename('Sample variance of the sample means'=sample_var,
-    #       'Mean asymptotic variance'=asymp_var) %>%
-    #pivot_longer(cols = !n_trgt, names_to = "var_type", values_to = "variance") %>% 
-    #ggplot(aes(x=n_trgt, y=variance, colour=var_type, line_style=var_type)) + 
-    #geom_line(aes(linetype=var_type)) + labs(x='n') + 
-    #theme(legend.title = element_blank())
+  #rename('Sample variance of the sample means'=sample_var,
+  #       'Mean asymptotic variance'=asymp_var) %>%
+  #pivot_longer(cols = !n_trgt, names_to = "var_type", values_to = "variance") %>% 
+  #ggplot(aes(x=n_trgt, y=variance, colour=var_type, line_style=var_type)) + 
+  #geom_line(aes(linetype=var_type)) + labs(x='n') + 
+  #theme(legend.title = element_blank())
   
   #var_df %>% pivot_longer(cols = !n_trgt, names_to = "var_type", values_to = "variance") %>%
   #  ggplot(aes(x=n_trgt)) + 
@@ -753,9 +748,9 @@ two_factor_variance_analysis <- function(sims=3000,
   #var_df %>% pivot_longer(cols = !n_trgt, names_to = "var_type", values_to = "variance") %>%
   #  ggplot(aes(x=n_trgt)) + 
   #  geom_line(aes(y=variance), group_by = var_type)
-    #geom_line(aes(y=asymp_var), color = "steelblue", linetype="dashed") +
-    #geom_line(aes(y=sample_var), color = "darkred")
-
+  #geom_line(aes(y=asymp_var), color = "steelblue", linetype="dashed") +
+  #geom_line(aes(y=sample_var), color = "darkred")
+  
   
   return(var_df)
 }
@@ -785,7 +780,7 @@ prm$beta_1_track <- c(1)
 prm$beta_x_track <- c(0)
 prm$psi_lab <- c("psi_1")
 prm$psi_x_star <- c()
-prm$sims <- 1000
+prm$sims <- 3000
 prm$censor_date <- 80
 
 
@@ -822,12 +817,61 @@ print_results(nr_out_list$results_vec, prm)
 
 
 
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#           (1, x1) test block
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+prm$sim_label <- "(const_1, x_1)"
+prm$t_a_vec <- c(0)
+prm$expmean <- 50
+prm$n_trgt <- 400
+prm$beta_1_track <- c(1)
+prm$beta_x_track <- c(1)
+prm$psi_lab <- c("psi_1", "psi_x1")
+prm$sims <- 3000
+prm$censor_date <- 80
+
+
+prm$psi_1_star <- c(log(2))
+prm$psi_x_star <- c(log(1.5))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$censor <- F
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+prm$censor <- T
+nr_out_list <- nr_run(prm=prm)
+#print_results_df(nr_out_list$results_df)
+print_results(nr_out_list$results_vec, prm)
+
+
+prm$psi_1_star <- c(log(1))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$censor <- F
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+prm$censor <- T
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+
+
+prm$psi_1_star <- c(log(1/2))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$censor <- F
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+prm$censor <- T
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+
+
+
+
 
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
 #           (1) -> (1) block                            #   ##
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
 
-  
+
 
 prm$sim_label <- "(const_1) -> (const_1)"
 prm$t_a_vec <- c(0, 35)
@@ -836,7 +880,7 @@ prm$n_trgt <- 400
 prm$beta_1_track <- c(1, 1)
 prm$beta_x_track <- c(0, 0)
 prm$psi_lab <- c("psi_1")
-prm$sims <- 1000
+prm$sims <- 3000
 prm$censor_date <- 80
 
 prm$psi_1_star <- c(log(2))
@@ -871,6 +915,65 @@ nr_out_list <- nr_run(prm=prm)
 print_results(nr_out_list$results_vec, prm)
 
 
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#           (1, x1) -> (1, x1) block                            #   ##
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+
+
+prm$sim_label <- "(const_1, x_1) -> (const_1, x_1)"
+prm$t_a_vec <- c(0, 35)
+prm$expmean <- 50
+prm$n_trgt <- 400
+prm$beta_1_track <- c(1, 1)
+prm$beta_x_track <- c(1, 1)
+prm$psi_lab <- c("psi_1", "psi_x1")
+prm$sims <- 3000
+prm$censor_date <- 80
+
+
+prm$psi_1_star <- c(log(2))
+prm$psi_x_star <- c(log(1.5))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$censor <- F
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+prm$censor <- T
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+
+
+prm$psi_1_star <- c(log(2))
+prm$psi_x_star <- c(log(1/1.5))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$censor <- F
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+prm$censor <- T
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+
+prm$psi_1_star <- c(log(1/2))
+prm$psi_x_star <- c(log(1.5))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$censor <- F
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+prm$censor <- T
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+
+prm$psi_1_star <- c(log(1/2))
+prm$psi_x_star <- c(log(1/1.5))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$censor <- F
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+prm$censor <- T
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+
+
 
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
 #           (1) -> (2) block                            #   ##
@@ -887,6 +990,10 @@ prm$beta_x_track <- c(0, 0)
 prm$psi_lab <- c("psi_1", "psi_2")
 prm$sims <- 3000
 prm$censor_date <- 80
+prm$treatment_models_list <- list(
+  c(""), c("a_0")
+)
+
 
 
 prm$psi_1_star <- c(log(2), log(2))
@@ -930,69 +1037,76 @@ nr_out_list <- nr_run(prm=prm)
 print_results(nr_out_list$results_vec, prm)
 
 
-##################################################################
-#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
-#           (1) -> (2) block                            #   ##
-#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
-##################################################################
 
 
-prm$sim_label <- "(const_1) -> (const_2)"
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#           (1, x1) -> (2, x2) block                            #   ##
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+
+
+prm$sim_label <- "(const_1, x_1) -> (const_2, x_2)"
 prm$t_a_vec <- c(0, 35)
 prm$expmean <- 50
-prm$n_trgt <- 800
+prm$n_trgt <- 400
 prm$beta_1_track <- c(1, 2)
-prm$beta_x_track <- c(0, 0)
-prm$psi_lab <- c("psi_1", "psi_2")
+prm$beta_x_track <- c(1, 2)
+prm$psi_lab <- c("psi_1", "psi_2", "psi_x1", "psi_x2")
+prm$sims <- 3000
+prm$censor_date <- 80
+
+
 prm$psi_1_star <- c(log(2), log(2))
-prm$psi_x_star <- c()
+prm$psi_x_star <- c(log(1.5), log(1.5))
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
-prm$sims <- 5000
 prm$censor <- F
-nr_out <- nr_run(prm=prm)
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
 prm$censor <- T
-prm$censor_date <- 80
-nr_out <- nr_run(prm=prm)
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
 
 
-
-
-prm$sim_label <- "(const_1) -> (const_1)"
-prm$t_a_vec <- c(0, 35)
-prm$expmean <- 50
-prm$n_trgt <- 400
-prm$beta_1_track <- c(1, 1)
-prm$beta_x_track <- c(0, 0)
-prm$psi_lab <- c("psi_1")
-prm$psi_1_star <- c(log(1))
-prm$psi_x_star <- c()
+prm$psi_1_star <- c(log(2), log(1/2))
+prm$psi_x_star <- c(log(1.5), log(1/1.5))
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
-prm$sims <- 3000
 prm$censor <- F
-nr_out <- nr_run(prm=prm)
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
 prm$censor <- T
-prm$censor_date <- 80
-nr_out <- nr_run(prm=prm)
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
 
-prm$sim_label <- "(const_1) -> (const_1)"
-prm$t_a_vec <- c(0, 35)
-prm$expmean <- 50
-prm$n_trgt <- 400
-prm$beta_1_track <- c(1, 1)
-prm$beta_x_track <- c(0, 0)
-prm$psi_lab <- c("psi_1")
+
+prm$psi_1_star <- c(log(2))
+prm$psi_x_star <- c(log(1/1.5))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$censor <- F
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+prm$censor <- T
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+
 prm$psi_1_star <- c(log(1/2))
-prm$psi_x_star <- c()
+prm$psi_x_star <- c(log(1.5))
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
-prm$sims <- 3000
 prm$censor <- F
-nr_out <- nr_run(prm=prm)
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
 prm$censor <- T
-prm$censor_date <- 80
-nr_out <- nr_run(prm=prm)
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
 
-
-
+prm$psi_1_star <- c(log(1/2))
+prm$psi_x_star <- c(log(1/1.5))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$censor <- F
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
+prm$censor <- T
+nr_out_list <- nr_run(prm=prm)
+print_results(nr_out_list$results_vec, prm)
 
 
 
