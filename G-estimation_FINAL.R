@@ -7,6 +7,7 @@ library(foreach)
 library(doParallel)
 library(tidyverse)
 library(gt)
+library(labelled)
 
 
 create_sample <- function(prm){
@@ -78,22 +79,33 @@ create_sample <- function(prm){
 }
 
 fit_treatment_models <- function(df, prm){
-  df <- df %>% mutate(fit_0 = glm(a_0 ~ 1, family=binomial)$fitted.values)
+  for(k in 0:(length(prm$trt_mod_list)-1)){
+    mdl_formula <- paste0("a_", k, " ~ ", 
+                          paste0(prm$trt_mod_list[[k+1]], collapse = " + "))
+    
+    model_temp <- with(df %>% filter(.$ti > prm$t_a_vec[[k+1]]), 
+                           glm(  as.formula(mdl_formula),
+                                 family=binomial))
+    df$fit_temp <- predict(model_temp, newdata = df, type="response")
+    names(df)[names(df) == "fit_temp"] <- paste0("fit_", k)
+  }
   
-  if(length(prm$t_a_vec) > 1){
-    for(i in 1:(length(prm$t_a_vec)-1)){
-      print(i)
+  #df <- df %>% mutate(fit_0 = glm(a_0 ~ 1, family=binomial)$fitted.values)
+  #
+  #if(length(prm$t_a_vec) > 1){
+  #  for(i in 1:(length(prm$t_a_vec)-1)){
+  #    print(i)
       #mdl_formula <- paste0("a_", i, "~ 1 +  ",
       #                      paste0("a_", 0:(i-1), collapse="+"))
-      mdl_formula <- paste0("a_", i, "~ 1 +  ",
-                            paste0("a_", i-1))
-      model_temp <- with(df %>% filter(.$ti > prm$t_a_vec[[i+1]]), 
-                         glm(  as.formula(mdl_formula),
-                               family=binomial))
-      df$fit_temp <- predict(model_temp, newdata = df, type="response")
-      names(df)[names(df) == "fit_temp"] <- paste0("fit_", i)
-    }
-  }
+  #    mdl_formula <- paste0("a_", i, "~ 1 +  ",
+  #                          paste0("a_", i-1))
+  #    model_temp <- with(df %>% filter(.$ti > prm$t_a_vec[[i+1]]), 
+  #                       glm(  as.formula(mdl_formula),
+  #                             family=binomial))
+  #    df$fit_temp <- predict(model_temp, newdata = df, type="response")
+  #    names(df)[names(df) == "fit_temp"] <- paste0("fit_", i)
+  #  }
+  #}
   
   return(df)
 }
@@ -287,8 +299,21 @@ calculate_score <- function(df, prm, psi_hat_vec){
 calculate_jacobian <- function(df, prm, psi_hat_vec){
   jacobi_vec <- c()
   jacobi_dim <- length(psi_hat_vec)
-  for (row_counter in 1:jacobi_dim){
-    for(col_counter in 1:jacobi_dim) {
+  
+  df_k_list <- lapply(0:(length(prm$t_a_vec)-1), 
+                      FUN=function(k){
+                        return(df %>% calculate_tau_k(prm=prm, psi_hat_vec=psi_hat_vec, a_k=k) %>%
+                          mutate(Si_temp = 0))
+                      })
+  
+  #for (row_counter in 1:jacobi_dim){
+  jacobian <- sapply(1:jacobi_dim, 
+  function(row_counter){
+    
+    #for(col_counter in 1:jacobi_dim) {
+    sapply(1:jacobi_dim,
+    function(col_counter){         
+
       
       if (row_counter <= length(prm$psi_1_star)) {
         d_num <- "theta_1"
@@ -315,8 +340,9 @@ calculate_jacobian <- function(df, prm, psi_hat_vec){
       for (a_curr in (0:(length(prm$t_a_vec)-1))){
         if (beta_track_row[[a_curr+1]] == i) {
           
-          df_k <- df %>% calculate_tau_k(prm=prm, psi_hat_vec=psi_hat_vec, a_k=a_curr) %>%
-            mutate(Si_temp = 0)
+          df_k <- df_k_list[[a_curr+1]]
+          #df_k <- df %>% calculate_tau_k(prm=prm, psi_hat_vec=psi_hat_vec, a_k=a_curr) %>%
+          #  mutate(Si_temp = 0)
           
           dC_dpsi <- 0
           for (m in (a_curr:(length(prm$t_a_vec)-1))) {
@@ -368,11 +394,11 @@ calculate_jacobian <- function(df, prm, psi_hat_vec){
         }
       }
       
-      jacobi_vec <- c(jacobi_vec, denom)
-    }
-  }
+      return(denom)
+    })
+  })
   
-  return(matrix(jacobi_vec, byrow=T, nrow=jacobi_dim))
+  return(jacobian)
 }
 
 newton_raphson_grad <- function(df, prm,

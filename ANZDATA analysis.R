@@ -13,6 +13,7 @@ library(gt)
 library(haven)
 library(survival)
 library(stats)
+library(labelled)
 
 source("G-estimation_FINAL.R")
 
@@ -122,6 +123,16 @@ df_3_wide <- df_3_vs_not %>% select(-c(has_NA, ai_NA, ai_finest)) %>%
 
 
 
+# Collect baseline variables
+df_baseline <- df_all %>% group_by(id) %>% summarise(age=max(age),
+                                                     sex=max(sex),
+                                                     race=max(racereduced))
+
+
+#Append baseline variables to wide datasets
+
+
+
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
 #           DATA ANALYSIS
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
@@ -131,11 +142,11 @@ df_3_wide <- df_3_vs_not %>% select(-c(has_NA, ai_NA, ai_finest)) %>%
 
 prm <- list()
 prm$sim_label <- "(const_1)"
-prm$t_a_vec <- seq(0, 90*33, 90)
+prm$t_a_vec <- seq(0, 90*32, 90)
 #prm$expmean <- 50
 #prm$n_trgt <- 400
-prm$beta_1_track <- rep(1,34)
-prm$beta_x_track <- rep(0, 34)
+prm$beta_1_track <- rep(1, 33)
+prm$beta_x_track <- rep(0, 33)
 prm$psi_lab <- c("psi_1")
 #prm$psi_x_star <- c()
 #prm$sims <- 3000
@@ -143,20 +154,25 @@ prm$censor_date <- 33*90
 prm$psi_1_star <- c(log(2))
 prm$psi_x_star <- c()
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
-prm$trt_mod_list <- sapply(0:33, function(k) {
+prm$trt_mod_list <- sapply(0:32, function(k) {
   if(k==0){ 
     return(c("1"))
   } else {
-    return( c("1", paste0("a_", k)) )
+    return( c("1", paste0("a_", k), "age", "sex", "race"))
   }
 })
-
 prm$censor <- T
 
 
 #df<- df_HvF_wide %>% fit_treatment_models(prm=prm)
 df <- df_3_wide
 
+df <- df %>% left_join(df_baseline, by="id")
+df <- df %>% mutate(sex=as.factor(sex),
+                      race=factor(race, labels = c("NZ maori/pacific" = 1,
+                                                      "Aus Indigenous" = 2,
+                                                      "Asian" = 3,
+                                                      "White/other" = 4))) 
 
 df <- df %>% fit_treatment_models(prm=prm)
 df <- df %>% mutate(C_i = prm$censor_date, x = 0)
@@ -168,10 +184,59 @@ nr_out <- df %>% newton_raphson_grad(prm=prm,
 (psi_hat_vec <- nr_out[[1]])
 (var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm))
 
-for(i in 1:33){
-  col_name <- as.name(paste0("a_", i))
-  df <- df %>% mutate(has_as = has_as + 1 - as.integer(is.na({{col_name}})) )
-}
 
-df <- df %>% mutate(na_cutoff = 90 %/% has_as)
-df <- df %>% mutate(is_good = (ti <= 90 * (has_as + 1)))
+
+
+
+
+prm <- list()
+prm$sim_label <- "(const_1)"
+prm$t_a_vec <- seq(0, 90*32, 90)
+#prm$expmean <- 50
+#prm$n_trgt <- 400
+prm$beta_1_track <- 1:33
+prm$beta_x_track <- rep(0, 33)
+prm$psi_lab <- paste0("psi_", 1:33)
+#prm$psi_x_star <- c()
+#prm$sims <- 3000
+prm$censor_date <- 33*90
+prm$psi_1_star <- rep(log(2), 33)
+prm$psi_x_star <- c()
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$trt_mod_list <- sapply(0:32, function(k) {
+  if(k==0){ 
+    return(c("1"))
+  } else {
+    return( c("1", paste0("a_", k), "age", "sex", "race"))
+  }
+})
+prm$censor <- T
+
+
+
+prm$beta_1_track <- lapply(1:8,  function(i) rep(i, 4)) %>% unlist() %>% c(., 8)
+prm$psi_1_star <- rep(log(2), 8)
+prm$psi_x_star <- c()
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+
+
+
+nr_out <- df %>% newton_raphson_grad(prm=prm, 
+                                     psi_start_vec=rep(0, length(prm$psi_star_vec)))
+(psi_hat_vec <- nr_out[[1]])
+(var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm))
+
+
+
+
+
+
+
+
+#for(i in 1:33){
+#  col_name <- as.name(paste0("a_", i))
+#  df <- df %>% mutate(has_as = has_as + 1 - as.integer(is.na({{col_name}})) )
+#}
+#
+#df <- df %>% mutate(na_cutoff = 90 %/% has_as)
+#df <- df %>% mutate(is_good = (ti <= 90 * (has_as + 1)))
