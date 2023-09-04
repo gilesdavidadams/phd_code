@@ -15,6 +15,75 @@ library(gt)
 source("G-estimation_FINAL.R")
 
 
+create_sample <- function(prm){
+  
+  # a0_size <- max(floor(n/2),1)
+  # a1_size <- max(floor(n/4),1)
+  # x_size <-  max(floor(n/8),1)
+  # df <- tibble(a_0 = c(rep(0, a0_size), rep(1, n - a0_size))) %>%
+  #   add_column(a_1 = c(rep(0, a1_size), rep(1, a0_size - a1_size),
+  #                      rep(0, a1_size), rep(1, n - (a0_size + a1_size)))) %>%
+  #   add_column(x = c(rep(0, x_size), rep(1, a1_size - x_size),
+  #                    rep(0, x_size), rep(1, (a0_size - a1_size) - x_size),
+  #                    rep(0, x_size), rep(1, a1_size - x_size),
+  #                    rep(0, x_size), rep(1, n - (a0_size + a1_size + x_size)))) %>%
+  #   add_column(t0  = runif(n, min=t0_min, max=t0_max )) %>%
+  #   mutate(ti = 0, t0_rsd = t0)
+  
+  a_vars <- length(prm$t_a_vec)
+  k_parts <- 2^(a_vars + 1)
+  
+  n_s <- ceiling(prm$n_trgt/k_parts)
+  prm$n <- n_s*k_parts
+  
+  df <- tibble(x = c(rep(0, n_s*(2^a_vars)), rep(1, n_s*(2^a_vars))))
+  
+  if(prm$censor){
+    df <- df %>% add_column(C_i = prm$censor_date)
+  }
+  
+  for (k in 0:(a_vars - 1)){
+    df <- df %>% add_column(a_curr = rep(c(
+      rep(0, n_s*(2^(a_vars-(k+1)))),
+      rep(1, n_s*(2^(a_vars-(k+1))))
+    ), 2^(k+1)))
+    names(df)[names(df) == "a_curr"] <- paste0("a_", k)
+  }
+  #uniform
+  #df <- df %>% add_column(t0  = runif(prm$n, min=prm$t0_min, max=prm$t0_max )) %>%
+  #exponential
+  df <- df %>% add_column(t0  = rexp(prm$n, rate=(1/prm$expmean))) %>%
+    mutate(ti = 0, t0_rsd = t0)
+  
+  for(i in 1:length(prm$t_a_vec)){
+    
+    t_curr <- prm$t_a_vec[[i]]
+    t_next <- ifelse(i < length(prm$t_a_vec), prm$t_a_vec[[i+1]] , Inf)
+    beta_1_now <- ifelse(prm$beta_1_track[[i]]==0, 0, prm$psi_1_star[[prm$beta_1_track[[i]]]])
+    beta_x_now <- ifelse(prm$beta_x_track[[i]]==0, 0, prm$psi_x_star[[prm$beta_x_track[[i]]]])
+    
+    names(df)[names(df)==paste0("a_", i-1)] <- "a_curr"
+    
+    df <- df %>% mutate(
+      g_psi =  beta_1_now + x*beta_x_now,
+      temp = pmin((t_next - t_curr)*exp(-g_psi*a_curr), t0_rsd),
+      ti = ti + temp*exp(g_psi*a_curr),
+      t0_rsd = t0_rsd - temp
+    )
+    
+    names(df)[names(df)=="a_curr"] <- paste0("a_", i-1) 
+  }
+  
+  if(prm$censor){
+    df <- df %>% mutate(ti = pmin(ti, C_i))
+  }
+  
+  df <- df %>% select(-c(t0_rsd, g_psi, temp))
+  
+  return(df)
+}
+
+
 nr_run <- function(prm){
   
   cl <- makePSOCKcluster(28)
@@ -35,13 +104,17 @@ nr_run <- function(prm){
       
       set.seed(seed_curr)
       df <- create_sample(prm=prm)
-      df <- df %>% fit_treatment_models(prm=prm)
+      
+      fit_trt_out <- df %>% fit_treatment_models(prm=prm)
+      df <- fit_trt_out[[1]]
+      trt_models <- fit_trt_out[[2]]
       
       nri_out <- df %>% newton_raphson_grad(prm=prm, 
                                             psi_start_vec=rep(0, length(prm$psi_star_vec)))
       (psi_hat_vec <- nri_out[[1]])
       
-      (var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm))
+      (var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm,
+                                            trt_models = trt_models))
       #(var_hat_fast <- df %>% calculate_variance_fast(psi_hat_vec=psi_hat_vec, prm=prm))
       
       if(max(diag(var_hat)) < 1) {
@@ -511,10 +584,28 @@ prm$n_trgt <- 400
 prm$beta_1_track <- c(1, 2)
 prm$beta_x_track <- c(0, 0)
 prm$psi_lab <- c("psi_1", "psi_2")
-prm$sims <- 3000
+prm$sims <- 100
 prm$censor_date <- 80
 prm$trt_mod_list <- list(
-  c("1"), c("1", "a_0")
+  c("1"), 
+  c("1", "a_0")
+)
+
+
+
+
+prm$sim_label <- "(const_1) -> (const_2)"
+prm$t_a_vec <- c(0, 5)
+prm$expmean <- 50
+prm$n_trgt <- 10000
+prm$beta_1_track <- c(1, 2)
+prm$beta_x_track <- c(0, 0)
+prm$psi_lab <- c("psi_1", "psi_2")
+prm$sims <- 1000
+prm$censor_date <- 80
+prm$trt_mod_list <- list(
+  c("1"), 
+  c("1", "a_0")
 )
 
 
