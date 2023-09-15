@@ -15,6 +15,8 @@ library(survival)
 library(stats)
 library(labelled)
 library(janitor)
+library(labelled)
+library(DescTools)
 
 source("G-estimation_FINAL.R")
 
@@ -691,6 +693,26 @@ MA_out_4 <- lapply(0:8,
                                VCV=VCV))
                  })
 
+MA_4_1st <- tibble(period=3:11,
+                   m1_psi_1=-sapply(1:9,
+                          function(k){
+                            MA_out_4[[k]]$psi_hat_vec[[1]]
+                          }),
+                   stdev=sapply(1:9,
+                          function(k){
+                            MA_out_4[[k]]$VCV[1,1] %>% sqrt()
+                          })
+                   )
+
+MA_4_1st %>%
+  ggplot(aes(x=period, y=psi_1)) +
+  geom_line() +
+  geom_errorbar(aes(ymin=psi_1-2*stdev, ymax=psi_1+2*stdev),
+                width=.2, position=position_dodge(0.05)) +
+  labs(title="Period 1 to x with 2*se CI's", 
+       y = "-1*psi on the log scale", 
+       x = "Final period of group")
+
 
 
 # Seeing if I can estimate shorter periods by starting at a previous psi_hat
@@ -772,22 +794,359 @@ psi_start <- c(psi_hat_vec[1:4], psi_hat_vec[4], psi_hat_vec[5:length(psi_hat_ve
 nr_out_8 <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
                                        psi_start_vec=psi_start,
                                        print_results=T)
-psi_hat_7 <- nr_out_12345555etc[[1]]
-(VCV_7 <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
-psi_hat_7 %>% rbind(sapply(1:7, function(k){sqrt(VCV_7[k,k])}))
+psi_hat_8 <- nr_out_8[[1]]
+#(VCV_7 <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+#psi_hat_7 %>% rbind(sapply(1:7, function(k){sqrt(VCV_7[k,k])}))
 
 
 
+beta_1_start <- c(1:6, rep(6,3), rep(7,4))
+prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+psi_hat_vec <- nr_out_7[[1]]
+psi_start <- c(psi_hat_vec[1:4], psi_hat_vec[4], psi_hat_vec[5:length(psi_hat_vec)])
+nr_out_8 <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                       psi_start_vec=psi_start,
+                                       print_results=T)
+psi_hat_8 <- nr_out_8[[1]]
+#(VCV_7 <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+#psi_hat_7 %>% rbind(sapply(1:7, function(k){sqrt(VCV_7[k,k])}))
 
-nr_out_8_11 <- lapply(1:4, 
+
+nr_out_9_12 <- lapply(1:4, 
       function(i){
-        k_max <- 4+i
-        beta_1_start <- c(1:k_max, rep(k_max+1, 4-i), rep(k_max+2, 4))
+        k_max <- 5+i
+        beta_1_start <- c(1:k_max, rep(k_max+1, 5-i), rep(k_max+2, 4))
         prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
-        psi_start <- c(psi_hat_7[1:4], rep(psi_hat_7[4], i), psi_hat_7[4:length(psi_hat_7)])
+        psi_start <- c(psi_hat_8[1:5], rep(psi_hat_8[5], i), psi_hat_8[6:length(psi_hat_8)])
         nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
                                              psi_start_vec=psi_start,
                                              print_results=T)
         return(nr_out[[1]])
 })
+psi_hat_12 <- nr_out_9_12[[4]]
+
+
+psi_hat_old <- psi_hat_12
+nr_out_13_16 <- lapply(1:4, 
+      function(i){
+        k_max <- 10+i
+        beta_1_start <- c(1:k_max, rep(k_max+1, 5-i))
+        prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+        psi_start <- c(psi_hat_old[1:10], rep(psi_hat_old[10], i), psi_hat_old[11:length(psi_hat_old)])
+        nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                             psi_start_vec=psi_start,
+                                             print_results=T)
+        return(nr_out[[1]])
+      })
+
+psi_hat_13 <- nr_out_13_16[[1]]
+beta_1_start <- c(1:11, rep(12, 4))
+prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+(VCV_13 <- df %>% calculate_variance(prm, psi_hat_13, trt_models))
+#psi_hat_7 %>% rbind(sapply(1:7, function(k){sqrt(VCV_7[k,k])}))
+psi_VCV_13 <- psi_hat_13 %>% rbind(sapply(1:13, function(k){VCV_13[k,k]}))
+prm$beta_1_track
+
+stdev_13 <- sapply(1:13, function(k){VCV_13[k,k] %>% sqrt()})
+
+df_13 <- tibble(period=1:13, psi=-psi_hat_13, 
+                stdev=)
+df_13 %>%
+  ggplot(aes(x=period, y=psi)) +
+  geom_line() +
+  geom_errorbar(aes(ymin=psi-2*stdev, ymax=psi+2*stdev),
+                width=.2, position=position_dodge(0.05)) +
+  labs(title="Periods 1-11 are single periods, then groups with 2*se CI's", 
+       y = "psi on the log scale", 
+       x = "Period (1-11 single, then groups)")
+                                   
+
+
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#           Building a model that is a sequence of
+#           single periods followed by one big period
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+prm$beta_1_track <- rep(1,26)
+nr_out_inc_list <- list()
+for(i in 0:13){
+  if(i > 0){
+    prm$beta_1_track <- c(1:i, rep(i+1, 26-i))
+  } else {
+    prm$beta_1_track <- rep(1,26)
+  }
+  
+  if(i == 0){
+    psi_start <- c(0)
+  } else if(i == 1){
+    psi_start <- c(psi_hat_old, psi_hat_old)
+  } else {
+    psi_start <- c(psi_hat_old[1:(i-1)], 
+                   psi_hat_old[i-1],
+                   psi_hat_old[i:length(psi_hat_old)])
+
+  }
+  
+  nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                       psi_start_vec=psi_start,
+                                       print_results=T)
+  psi_hat_old <- nr_out[[1]]
+  nr_out_inc_list <- nr_out_inc_list %>% append(., list(psi_hat_old))
+}
+
+
+nr_out_piece_list <- list()
+#for(i in 0:13){
+for(i in 14:20){
+  if(i > 0){
+    prm$beta_1_track <- c(1:i, rep(i+1, 26-i))
+  } else {
+    prm$beta_1_track <- rep(1,26)
+  }
+  
+  if(i == 0){
+    psi_start <- c(0)
+  } else if(i == 1){
+    psi_start <- c(psi_hat_old, psi_hat_old)
+  } else {
+    psi_start <- c(psi_hat_old[1:(i-1)], 
+                   psi_hat_old[i-1],
+                   psi_hat_old[i:length(psi_hat_old)])
+    
+  }
+  
+  nr_out <- df %>% newton_raphson_piece(prm=prm, tol=0.01,
+                                       psi_start_vec=psi_start,
+                                       print_results=T)
+  psi_hat_old <- nr_out[[1]]
+  nr_out_piece_list <- nr_out_piece_list %>% append(., list(psi_hat_old))
+}
+
+df_indiv <- tibble(period=0:25)
+for(i in 1:20){
+  psi_hat <- nr_out_piece_list[[i]]
+  
+  psi_by_period <- sapply(1:26, 
+                    function(k){
+                      if(k < length(psi_hat)){
+                        return(-psi_hat[k])
+                      } else {
+                        return(-psi_hat[length(psi_hat)])
+                      }
+                    })
+  
+  #ste_by_period <- sapply(1:9, 
+  #                        function(k){
+  #                          ste_vec[[prm$beta_1_track[[k]]]]  
+  #                        })
+  psi_col <- as.name(paste0("itr_", i))
+  #ste_col <- as.name(paste0("itr_", i, "_ste"))
+  df_indiv <- df_indiv %>% add_column("{psi_col}" := psi_by_period)
+  
+  #nr_out_MA_list <- nr_out_MA_list %>% append(., list(psi_hat_old))
+}
+df_indiv %>% pivot_longer(cols = !period) %>% 
+  ggplot(aes(x=period, y=value, group=name)) +
+  geom_point() + geom_line()
+
+# Last period that worked went up to period 8 as individuals.
+# This broke at period 9 so testing if combining periods will
+# allow it to work.
+psi_hat_8 <- nr_out_inc_list[[9]]
+beta_1_start <- c(1:8, rep(9,2))
+prm$beta_1_track <- c(beta_1_start, rep(10, 26-length(beta_1_start)))
+psi_start <- c(psi_hat_8[1:8], psi_hat_8[[8]], psi_hat_8[[9]])
+
+nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=psi_start,
+                                     print_results=T)
+
+
+
+psi_hat_8 <- nr_out_inc_list[[8]]
+beta_1_start <- c(1:6, rep(7,2), 8:9)
+prm$beta_1_track <- c(beta_1_start, rep(10, 26-length(beta_1_start)))
+psi_start <- c(psi_hat_8[1:6], psi_hat_8[[7]], rep(psi_hat_8[[8]],3))
+
+nr_out_9 <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=psi_start,
+                                     print_results=T)
+
+
+psi_hat_9 <- nr_out_9[[1]]
+#psi_hat_8 <- nr_out_inc_list[[8]]
+beta_1_start <- c(1:6, rep(7,2), 8:10, rep(11,2), 12:14)
+prm$beta_1_track <- c(beta_1_start, rep(15, 26-length(beta_1_start)))
+psi_start <- c(psi_hat_9[1:9], rep(psi_hat_9[[10]],6))
+
+nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=psi_start,
+                                     print_results=T)
+
+# nr_out_13_16 <- lapply(1:4, 
+#                        function(i){
+#                          k_max <- 10+i
+#                          beta_1_start <- c(1:k_max, rep(k_max+1, 5-i))
+#                          prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+#                          psi_start <- c(psi_hat_old[1:10], rep(psi_hat_old[10], i), psi_hat_old[11:length(psi_hat_old)])
+#                          nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+#                                                               psi_start_vec=psi_start,
+#                                                               print_results=T)
+#                          return(nr_out[[1]])
+#                        })
+
+
+
+
+
+
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#           Building models with a "moving" average of 4 periods
+#           First 4-4-x then 1-4-3-x, 2-4-2-x etc
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+prm$beta_1_track <- rep(1,26)
+nr_out_MA_list <- list()
+df_MA <- tibble(period=0:8)
+for(i in 0:4){
+  if(i==0){
+    prm$beta_1_track <- c(rep(1,4), rep(2,4), rep(3, 18))
+  } else if(i < 4){
+    prm$beta_1_track <- c(rep(1,i), rep(2, 4), rep(3, 4-i), rep(4, 18))
+  } else {
+    prm$beta_1_track <- c(rep(1,4), rep(2,4), rep(3, 18))
+  }
+
+  if(i == 0){
+    psi_start <- rep(0, 3)
+  } else if(i == 1){
+    psi_start <- c(psi_hat_old[[1]], psi_hat_old[[2]], psi_hat_old[[2]],
+                   psi_hat_old[[3]])
+  } else if (i %in% c(2,3)) {
+    psi_start <- psi_hat_old
+  } else{
+    psi_start <- c(psi_hat_old[[1]], psi_hat_old[[2]], psi_hat_old[[4]])
+  }
+
+  nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                       psi_start_vec=psi_start,
+                                       print_results=T)
+  psi_hat_old <- nr_out[[1]]
+  VCV <- df %>% calculate_variance(prm, psi_hat_old, trt_models)
+  
+  ste_vec <- sapply(1:(dim(VCV)[[1]]), 
+                     function(k){VCV[k,k] %>% sqrt()})
+  
+  psi_by_period <- sapply(1:9, 
+                    function(k){
+                      -psi_hat_old[[prm$beta_1_track[[k]]]]  
+                    })
+  ste_by_period <- sapply(1:9, 
+                          function(k){
+                            ste_vec[[prm$beta_1_track[[k]]]]  
+                          })
+  psi_col <- as.name(paste0("itr_", i))
+  ste_col <- as.name(paste0("itr_", i, "_ste"))
+  df_MA <- df_MA %>% add_column("{psi_col}" := psi_by_period,
+                                "{ste_col}" := ste_by_period)
+  
+  #nr_out_MA_list <- nr_out_MA_list %>% append(., list(psi_hat_old))
+}
+
+
+ggplot(df_MA, aes(x=period)) +
+  geom_point(aes(y=itr_0, size=4), color="red") +
+  geom_line(aes(y=itr_0), color="red") +
+  geom_errorbar(aes(ymin=itr_0-2*itr_0_ste, ymax=itr_0+2*itr_0_ste),
+                width=.2, position=position_dodge(0.05), color="red") + 
+  geom_point(aes(y=itr_1, size=4), color="darkred") +
+  geom_line(aes(y=itr_1), color="darkred") +
+  geom_errorbar(aes(ymin=itr_1-2*itr_1_ste, ymax=itr_1+2*itr_1_ste),
+                width=.2, position=position_dodge(0.05), color="darkred") + 
+  geom_point(aes(y=itr_2, size=4), color="blue") +
+  geom_line(aes(y=itr_2), color="blue") +
+  geom_errorbar(aes(ymin=itr_2-2*itr_2_ste, ymax=itr_2+2*itr_2_ste),
+                width=.2, position=position_dodge(0.05), color="blue") + 
+  geom_point(aes(y=itr_3, size=4), color="lightblue") +
+  geom_line(aes(y=itr_3), color="lightblue") +
+  geom_errorbar(aes(ymin=itr_3-2*itr_3_ste, ymax=itr_3+2*itr_3_ste),
+                width=.2, position=position_dodge(0.05), color="lightblue") + 
+  geom_point(aes(y=itr_4, size=4), color="green") + 
+  geom_line(aes(y=itr_4), color="green") +
+  geom_errorbar(aes(ymin=itr_4-2*itr_4_ste, ymax=itr_4+2*itr_4_ste),
+                width=.2, position=position_dodge(0.05), color="green")
+
+
+
+
+
+
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#         Lyle's block models (tm)
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+#nr_out_MA_list <- list()
+df_Lyle_psis <- tibble(psi=1:5)
+for(i in 1:8){
+  prm$beta_1_track <- c(rep(1, i), rep(2,4), rep(3,4), rep(4,4), rep(5, 26-i-3*4))
+  
+  if(i == 1){
+    psi_start <- c(df_MA$itr_0[[1]], rep(df_MA$itr_0[[5]],3),
+                   df_MA$itr_0[[9]])
+  } else {
+    psi_start <- psi_hat_old
+  }
+  
+  #nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+  #                                     psi_start_vec=psi_start,
+  #                                     print_results=T)
+  
+  
+  nr_out_piecewise <- df %>% newton_raphson_piece(prm=prm, tol=0.01,
+                                       psi_start_vec=psi_start,
+                                       max_sub_iter = 20,
+                                       print_results=T)
+  psi_hat <- nr_out_piecewise[[1]]
+  #VCV <- df %>% calculate_variance(prm, psi_hat_old, trt_models)
+  
+  #ste_vec <- sapply(1:(dim(VCV)[[1]]), 
+  #                  function(k){VCV[k,k] %>% sqrt()})
+  
+  #psi_by_period <- sapply(1:9, 
+  #                        function(k){
+  #                          -psi_hat_old[[prm$beta_1_track[[k]]]]  
+  #                        })
+  #ste_by_period <- sapply(1:9, 
+  #                        function(k){
+  #                          ste_vec[[prm$beta_1_track[[k]]]]  
+  #                        })
+  psi_col <- as.name(paste0("itr_", i))
+  #ste_col <- as.name(paste0("itr_", i, "_ste"))
+  #df_MA <- df_MA %>% add_column("{psi_col}" := psi_by_period,
+  #"{ste_col}" := ste_by_period)
+  
+  df_Lyle_psis <- df_Lyle_psis %>% add_column("{psi_col}" := psi_hat)
+  
+  psi_hat_old <- psi_hat
+  #nr_out_MA_list <- nr_out_MA_list %>% append(., list(psi_hat_old))
+}
+
+df_lyle <- tibble(period=0:25)
+matrix_lyle <- df_Lyle_psis %>% as.matrix()
+for(i in 1:8){
+  prm$beta_1_track <- c(rep(1, i), rep(2,4), rep(3,4), rep(4,4), rep(5, 26-i-3*4))
+  psi_hat <- matrix_lyle[1:5, i+1]
+  
+  psi_by_period <- sapply(1:26, 
+                    function(k){
+                      return(-psi_hat[prm$beta_1_track[[k]]])
+                    })
+  psi_col <- as.name(paste0("itr_", i))
+  df_lyle <- df_lyle %>% add_column("{psi_col}" := psi_by_period)
+}
+
+df_lyle_2 %>% pivot_longer(cols = !period) %>% 
+  ggplot(aes(x=period, y=value, group=name)) +
+  geom_point() + geom_line()
+
 

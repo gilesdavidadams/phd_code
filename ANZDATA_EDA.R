@@ -210,5 +210,5 @@ prm$beta_1_track <- c(rep(1,4), rep(2,4), rep(3,4),
                       rep(4,4), rep(5,4), rep(6,6))
 nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
                                      psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
-(psi_hat_vec <- nr_out[[1]])
+(psi_hat <- nr_out[[1]])
 (VCV <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
