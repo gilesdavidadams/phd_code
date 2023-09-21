@@ -1087,10 +1087,17 @@ ggplot(df_MA, aes(x=period)) +
 
 #nr_out_MA_list <- list()
 df_Lyle_psis <- tibble(psi=1:5)
-for(i in 1:8){
-  prm$beta_1_track <- c(rep(1, i), rep(2,4), rep(3,4), rep(4,4), rep(5, 26-i-3*4))
+df_Lyle_stes <- tibble(ste=1:5)
+for(i in 0:8){
   
-  if(i == 1){
+  if(i == 0){
+    prm$beta_1_track <- c(rep(1,4), rep(2,4), rep(3,4), rep(4, 26-i-3*4))
+  } else {
+    prm$beta_1_track <- c(rep(1, i), rep(2,4), rep(3,4), rep(4,4), rep(5, 26-i-3*4))
+  }
+  
+  if(i == 0){ psi_start <- rep(df_MA$itr_0[[5]],4)}
+  else if(i == 1){
     psi_start <- c(df_MA$itr_0[[1]], rep(df_MA$itr_0[[5]],3),
                    df_MA$itr_0[[9]])
   } else {
@@ -1107,35 +1114,33 @@ for(i in 1:8){
                                        max_sub_iter = 20,
                                        print_results=T)
   psi_hat <- nr_out_piecewise[[1]]
-  #VCV <- df %>% calculate_variance(prm, psi_hat_old, trt_models)
+  
+  if(i == 0){
+    psi_hat <- c(psi_hat, NA)
+  }  
+  #VCV <- df %>% calculate_variance(prm, psi_hat, trt_models)
   
   #ste_vec <- sapply(1:(dim(VCV)[[1]]), 
   #                  function(k){VCV[k,k] %>% sqrt()})
   
-  #psi_by_period <- sapply(1:9, 
-  #                        function(k){
-  #                          -psi_hat_old[[prm$beta_1_track[[k]]]]  
-  #                        })
-  #ste_by_period <- sapply(1:9, 
-  #                        function(k){
-  #                          ste_vec[[prm$beta_1_track[[k]]]]  
-  #                        })
   psi_col <- as.name(paste0("itr_", i))
-  #ste_col <- as.name(paste0("itr_", i, "_ste"))
-  #df_MA <- df_MA %>% add_column("{psi_col}" := psi_by_period,
-  #"{ste_col}" := ste_by_period)
-  
+
   df_Lyle_psis <- df_Lyle_psis %>% add_column("{psi_col}" := psi_hat)
+  #df_Lyle_stes <- df_Lyle_stes %>% add_column("{psi_col}" := ste_vec)
   
   psi_hat_old <- psi_hat
-  #nr_out_MA_list <- nr_out_MA_list %>% append(., list(psi_hat_old))
 }
 
 df_lyle <- tibble(period=0:25)
 matrix_lyle <- df_Lyle_psis %>% as.matrix()
-for(i in 1:8){
-  prm$beta_1_track <- c(rep(1, i), rep(2,4), rep(3,4), rep(4,4), rep(5, 26-i-3*4))
-  psi_hat <- matrix_lyle[1:5, i+1]
+for(i in 0:8){
+  if(i == 0){
+    prm$beta_1_track <- c(rep(1,4), rep(2,4), rep(3,4), rep(4, 26-i-3*4))
+  } else {
+    prm$beta_1_track <- c(rep(1, i), rep(2,4), rep(3,4), rep(4,4), rep(5, 26-i-3*4))
+  }
+  #prm$beta_1_track <- c(rep(1, i), rep(2,4), rep(3,4), rep(4,4), rep(5, 26-i-3*4))
+  psi_hat <- matrix_lyle[1:5, i+2]
   
   psi_by_period <- sapply(1:26, 
                     function(k){
@@ -1144,6 +1149,36 @@ for(i in 1:8){
   psi_col <- as.name(paste0("itr_", i))
   df_lyle <- df_lyle %>% add_column("{psi_col}" := psi_by_period)
 }
+
+matrix_lyle_by_period <- df_lyle %>% select(-c(period)) %>% as.matrix()
+
+MA_design <- c(rep(1,1), rep(0,8), #1
+               rep(1,2), rep(0,7),
+               rep(1,3), rep(0,6),
+               rep(1,4), rep(0,5),
+               rep(1/2,1), rep(1,3), rep(1/2,1), rep(0,4), #5
+               rep(1/2,2), rep(1,2), rep(1/2,2), rep(0,3),
+               rep(1/2,3), rep(1,1), rep(1/2,3), rep(0,2),
+               rep(1/2,4), rep(0,0), rep(1/2,4), rep(0,1),
+               rep(1/3,1), rep(1/2,3), rep(1/3), rep(1/2, 3), rep(1/3,1),
+               rep(1/3,1), rep(1/2,3), rep(1/3), rep(1/2, 3), rep(1/3,1), #10
+               rep(1/3,1), rep(1/2,3), rep(1/3), rep(1/2, 3), rep(1/3,1),
+               rep(1/3,1), rep(1/2,3), rep(1/3), rep(1/2, 3), rep(1/3,1),
+               rep(0,1), rep(1/2,8),
+               rep(0,2), rep(1/2,3), rep(1,1), rep(1/2,3),
+               rep(0,3), rep(1/2,2), rep(1,2), rep(1/2,2), #15
+               rep(0,4), rep(1/2,1), rep(1,3), rep(1/2,1),
+               rep(0,5), rep(1,4),
+               rep(0,6), rep(1,3),
+               rep(0,7), rep(1,2), 
+               rep(0,8), rep(1,1)) %>% matrix(ncol=9, byrow=T) %>% t()
+
+MA_converter <- sapply(1:20, function(k){MA_design[,k] / (sum(MA_design[,k]))})
+
+sapply(1:dim(MA_converter)[[2]],
+       function(k){
+         return(matrix_lyle_by_period[k,]%*%MA_converter[,k])
+       })
 
 df_lyle_2 %>% pivot_longer(cols = !period) %>% 
   ggplot(aes(x=period, y=value, group=name)) +

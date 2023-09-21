@@ -606,7 +606,7 @@ newton_raphson_piece <- function(df, prm,
       
       psi_hat_vec[[n]] <- solve(J_piece, S_piece) + psi_hat_vec[n]
       
-      
+            
       cat(paste0("psi_", n), " - Iteration", sub_steps, "\n")
       cat("\npsi_hat_old\n")
       print(psi_old_vec)
