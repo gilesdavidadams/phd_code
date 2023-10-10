@@ -36,7 +36,8 @@ create_sample <- function(prm){
   n_s <- ceiling(prm$n_trgt/k_parts)
   prm$n <- n_s*k_parts
   
-  df <- tibble(x = c(rep(0, n_s*(2^a_vars)), rep(1, n_s*(2^a_vars))))
+  df <- tibble(id=1:prm$n_trgt, 
+               x = c(rep(0, n_s*(2^a_vars)), rep(1, n_s*(2^a_vars))))
   
   if(prm$censor){
     df <- df %>% add_column(C_i = prm$censor_date)
@@ -107,10 +108,10 @@ nr_run <- function(prm){
       
       fit_trt_out <- df %>% fit_treatment_models(prm=prm)
       df <- fit_trt_out[[1]]
-      trt_models <- fit_trt_out[[2]]
+      prm$trt_models <- fit_trt_out[[2]]
       
-      nri_out <- df %>% newton_raphson_grad(prm=prm, 
-                                            psi_start_vec=rep(0, length(prm$psi_star_vec)))
+      nri_out <- df %>% newton_raphson_piece(prm=prm) 
+                                            #psi_start_vec=rep(0, length(prm$psi_star_vec)))
       (psi_hat_vec <- nri_out[[1]])
       
       (var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm,
@@ -590,6 +591,7 @@ prm$trt_mod_list <- list(
   c("1"), 
   c("1", "a_0")
 )
+
 
 
 

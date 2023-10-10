@@ -212,3 +212,333 @@ nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
                                      psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
 (psi_hat <- nr_out[[1]])
 (VCV <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+
+
+
+
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#           COUNTING TREATMENT SWITCHES FOR CvA
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+
+switch_counter <- lapply(1:25, function(k){
+  var_now <- as.name(paste0("a_", k))
+  var_prev <- as.name(paste0("a_", k-1))
+  
+  q <- df_cva_25_full %>% 
+        select({{var_now}}, {{var_prev}}, lastperiod) %>% 
+        filter(lastperiod >= k) %>%    
+    #filter(!is.na({{var_now}})) %>% 
+        mutate(switch = ifelse({{var_now}}=={{var_prev}}, 0, 1),
+               dies_now = ifelse(lastperiod==k, 1, 0))
+  
+  switch_amount <- q %>% select(switch) %>% sum(na.rm=T)
+  switch_deaths <- q %>% filter(switch==1) %>% 
+                  select(dies_now) %>% sum(na.rm=T)
+  total_deaths <- q %>% select(dies_now) %>% sum(na.rm=T)
+  n_alive <- q %>% nrow()
+  
+  return(tibble(switches=switch_amount[[1]], 
+                switch_deaths=switch_deaths[[1]],
+                deaths=total_deaths[[1]],
+                n_alive=n_alive))
+}) %>% Reduce(rbind, .) %>% print(n=25)
+
+
+
+
+
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#           BUILDING MODELS FOR MA
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+
+nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
+(psi_hat_vec <- nr_out[[1]])
+(VCV <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+
+prm$beta_1_track <- c(rep(1,4), rep(2,4), rep(3,4),
+                      rep(4,4), rep(5,10))
+
+nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
+(psi_hat_vec <- nr_out[[1]])
+(VCV <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+
+
+MA_out_5 <- lapply(0:4,
+                   function(k){
+                     prm$beta_1_track <- c(rep(1,4+k), rep(2,4), rep(3,4),
+                                           rep(4,4), rep(5,10-k))
+                     
+                     nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                                          psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
+                     (psi_hat_vec <- nr_out[[1]])
+                     VCV <- NA
+                     #(VCV <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+                     
+                     return(list(psi_hat_vec=psi_hat_vec,
+                                 VCV=VCV))
+                   })
+
+MA_out_4 <- lapply(0:8,
+                   function(k){
+                     prm$beta_1_track <- c(rep(1,4+k), rep(2,4), rep(3,4),
+                                           rep(4,14-k))
+                     
+                     nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                                          psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
+                     (psi_hat_vec <- nr_out[[1]])
+                     #VCV <- NA
+                     (VCV <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+                     
+                     return(list(psi_hat_vec=psi_hat_vec,
+                                 VCV=VCV))
+                   })
+
+MA_4_1st <- tibble(period=3:11,
+                   m1_psi_1=-sapply(1:9,
+                                    function(k){
+                                      MA_out_4[[k]]$psi_hat_vec[[1]]
+                                    }),
+                   stdev=sapply(1:9,
+                                function(k){
+                                  MA_out_4[[k]]$VCV[1,1] %>% sqrt()
+                                })
+)
+
+MA_4_1st %>%
+  ggplot(aes(x=period, y=psi_1)) +
+  geom_line() +
+  geom_errorbar(aes(ymin=psi_1-2*stdev, ymax=psi_1+2*stdev),
+                width=.2, position=position_dodge(0.05)) +
+  labs(title="Period 1 to x with 2*se CI's", 
+       y = "-1*psi on the log scale", 
+       x = "Final period of group")
+
+
+
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#           BUILDING MODELS FOR PERIOD SPECIFIC PSIS
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+
+# Seeing if I can estimate shorter periods by starting at a previous psi_hat
+offset=-1
+prm$beta_1_track <- c(rep(1,4+offset), rep(2,4), rep(3,4),
+                      rep(4,14-offset))
+
+nr_out_m1 <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                        psi_start_vec=c(-0.8602233, -0.4174207, -0.3215344, -0.1973486),
+                                        print_results=T
+)
+
+offset=-2
+prm$beta_1_track <- c(rep(1,4+offset), rep(2,4), rep(3,4),
+                      rep(4,14-offset))
+nr_out_m2 <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                        psi_start_vec=nr_out_m1[[1]],
+                                        print_results=T
+)
+
+offset=-3
+prm$beta_1_track <- c(rep(1,4+offset), rep(2,4), rep(3,4),
+                      rep(4,14-offset))
+nr_out_m3 <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                        psi_start_vec=nr_out_m2[[1]],
+                                        print_results=T
+)
+
+# Building on previous results to extend size of psi_hat
+
+# Reducing the 1st period
+beta_1_start <- c(1, 2, rep(3,4), rep(4,4))
+prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+psi_hat_vec <- nr_out_m3[[1]]
+psi_start <- c(psi_hat_vec[1], psi_hat_vec[1], psi_hat_vec[2:length(psi_hat_vec)])
+
+nr_out_1234444etc <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                                psi_start_vec=psi_start,
+                                                print_results=T)
+
+beta_1_start <- c(1, 2, 3, rep(4,4), rep(5,4))
+prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+psi_hat_vec <- nr_out_123333etc[[1]]
+psi_start <- c(psi_hat_vec[1:2], psi_hat_vec[2], psi_hat_vec[3:length(psi_hat_vec)])
+
+nr_out_1234444etc <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                                psi_start_vec=psi_start,
+                                                print_results=T)
+
+beta_1_start <- c(1, 2, 3, 4, rep(5,4), rep(6,4))
+prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+psi_hat_vec <- nr_out_1234444etc[[1]]
+psi_start <- c(psi_hat_vec[1:3], psi_hat_vec[3], psi_hat_vec[4:length(psi_hat_vec)])
+
+nr_out_12345555etc <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                                 psi_start_vec=psi_start,
+                                                 print_results=T)
+psi_hat_7 <- nr_out_12345555etc[[1]]
+(VCV_7 <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+psi_hat_7 %>% rbind(sapply(1:7, function(k){sqrt(VCV_7[k,k])}))
+
+
+beta_1_start <- c(1:5, rep(6,3), rep(7,4))
+prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+psi_hat_vec <- nr_out_7[[1]]
+psi_start <- c(psi_hat_vec[1:4], psi_hat_vec[4], psi_hat_vec[5:length(psi_hat_vec)])
+nr_out_8 <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                       psi_start_vec=psi_start,
+                                       print_results=T)
+psi_hat_7 <- nr_out_12345555etc[[1]]
+(VCV_7 <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+psi_hat_7 %>% rbind(sapply(1:7, function(k){sqrt(VCV_7[k,k])}))
+
+
+beta_1_start <- c(1:5, rep(6,3), rep(7,4))
+prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+psi_hat_vec <- nr_out_7[[1]]
+psi_start <- c(psi_hat_vec[1:4], psi_hat_vec[4], psi_hat_vec[5:length(psi_hat_vec)])
+nr_out_8 <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                       psi_start_vec=psi_start,
+                                       print_results=T)
+psi_hat_8 <- nr_out_8[[1]]
+#(VCV_7 <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+#psi_hat_7 %>% rbind(sapply(1:7, function(k){sqrt(VCV_7[k,k])}))
+
+
+
+beta_1_start <- c(1:6, rep(6,3), rep(7,4))
+prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+psi_hat_vec <- nr_out_7[[1]]
+psi_start <- c(psi_hat_vec[1:4], psi_hat_vec[4], psi_hat_vec[5:length(psi_hat_vec)])
+nr_out_8 <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                       psi_start_vec=psi_start,
+                                       print_results=T)
+psi_hat_8 <- nr_out_8[[1]]
+#(VCV_7 <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+#psi_hat_7 %>% rbind(sapply(1:7, function(k){sqrt(VCV_7[k,k])}))
+
+
+nr_out_9_12 <- lapply(1:4, 
+                      function(i){
+                        k_max <- 5+i
+                        beta_1_start <- c(1:k_max, rep(k_max+1, 5-i), rep(k_max+2, 4))
+                        prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+                        psi_start <- c(psi_hat_8[1:5], rep(psi_hat_8[5], i), psi_hat_8[6:length(psi_hat_8)])
+                        nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                                             psi_start_vec=psi_start,
+                                                             print_results=T)
+                        return(nr_out[[1]])
+                      })
+psi_hat_12 <- nr_out_9_12[[4]]
+
+
+psi_hat_old <- psi_hat_12
+nr_out_13_16 <- lapply(1:4, 
+                       function(i){
+                         k_max <- 10+i
+                         beta_1_start <- c(1:k_max, rep(k_max+1, 5-i))
+                         prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+                         psi_start <- c(psi_hat_old[1:10], rep(psi_hat_old[10], i), psi_hat_old[11:length(psi_hat_old)])
+                         nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                                              psi_start_vec=psi_start,
+                                                              print_results=T)
+                         return(nr_out[[1]])
+                       })
+
+psi_hat_13 <- nr_out_13_16[[1]]
+beta_1_start <- c(1:11, rep(12, 4))
+prm$beta_1_track <- c(beta_1_start, rep(max(beta_1_start)+1, 26-length(beta_1_start)))
+(VCV_13 <- df %>% calculate_variance(prm, psi_hat_13, trt_models))
+#psi_hat_7 %>% rbind(sapply(1:7, function(k){sqrt(VCV_7[k,k])}))
+psi_VCV_13 <- psi_hat_13 %>% rbind(sapply(1:13, function(k){VCV_13[k,k]}))
+prm$beta_1_track
+
+stdev_13 <- sapply(1:13, function(k){VCV_13[k,k] %>% sqrt()})
+
+df_13 <- tibble(period=1:13, psi=-psi_hat_13, 
+                stdev=)
+df_13 %>%
+  ggplot(aes(x=period, y=psi)) +
+  geom_line() +
+  geom_errorbar(aes(ymin=psi-2*stdev, ymax=psi+2*stdev),
+                width=.2, position=position_dodge(0.05)) +
+  labs(title="Periods 1-11 are single periods, then groups with 2*se CI's", 
+       y = "psi on the log scale", 
+       x = "Period (1-11 single, then groups)")
+
+
+
+
+# All periods together, single psi
+nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
+(psi_hat_vec <- nr_out[[1]])
+
+
+first_part <- 4
+prm$beta_1_track <- c(rep(1, first_part), rep(2, 34-first_part))
+nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
+(psi_hat_vec <- nr_out[[1]])
+
+
+
+
+
+first_part <- c(rep(1,4), rep(2,4))#, rep(3,2))
+prm$beta_1_track <- c(first_part, rep(max(first_part)+1, 34-length(first_part)))
+#  c(rep(1, 4), 2, rep(3, 34-(4+1)))
+
+nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
+(psi_hat_vec <- nr_out[[1]])
+
+
+
+
+first_part <- c(rep(1,4), rep(2,4), rep(3,4))
+prm$beta_1_track <- c(first_part, rep(max(first_part)+1, 34-length(first_part)))
+#  c(rep(1, 4), 2, rep(3, 34-(4+1)))
+
+nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
+(psi_hat_vec <- nr_out[[1]])
+
+
+
+first_part <- c(rep(1,4), rep(2,4), rep(3,4), rep(4,4))
+prm$beta_1_track <- c(first_part, rep(max(first_part)+1, 34-length(first_part)))
+#  c(rep(1, 4), 2, rep(3, 34-(4+1)))
+
+nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
+(psi_hat_vec <- nr_out[[1]])
+
+
+
+first_part <- c(rep(1,4), rep(2,4), rep(3,4), rep(4,4), rep(5,4))
+prm$beta_1_track <- c(first_part, rep(max(first_part)+1, 34-length(first_part)))
+#  c(rep(1, 4), 2, rep(3, 34-(4+1)))
+
+nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
+(psi_hat_vec <- nr_out[[1]])
+
+
+
+first_part <- c(rep(1,4), rep(2,4), rep(3,4), rep(4,4), rep(5,4), rep(6,4))
+prm$beta_1_track <- c(first_part, rep(max(first_part)+1, 34-length(first_part)))
+#  c(rep(1, 4), 2, rep(3, 34-(4+1)))
+
+nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
+                                     psi_start_vec=rep(0, max(prm$beta_1_track) + max(prm$beta_x_track)))
+(psi_hat_vec <- nr_out[[1]])
+
+
+
+(VCV <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
+nr_out_list <- df_3_wide_run(prm)
+

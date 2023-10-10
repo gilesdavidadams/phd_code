@@ -344,9 +344,13 @@ calculate_jacobian <- function(df, prm, psi_hat_vec){
 }
 
 newton_raphson_grad <- function(df, prm,
-                                psi_start_vec=c(0,0), 
+                                psi_start_vec=NA, 
                                 tol=0.001, max_iter=50, psi_max = 10,
                                 print_results=F){
+  
+  if(all(is.na(psi_start_vec))){
+    psi_start_vec <- rep(0, max(prm$beta_1_track))
+  }
   
   psi_hat_vec <- psi_start_vec
   psi_old_vec <- psi_hat_vec
@@ -569,11 +573,15 @@ newton_raphson_stepwise <- function(df, prm,
 }
 
 newton_raphson_piece <- function(df, prm,
-                                    psi_start_vec=c(0,0), 
+                                    psi_start_vec=NA, 
                                     tol=0.001, max_iter=50,
                                     max_sub_iter=10,
                                     psi_max = 10,
                                     print_results=F){
+  
+  if(all(is.na(psi_start_vec))){
+    psi_start_vec <- rep(0, max(prm$beta_1_track))
+  }
   
   psi_hat_vec <- psi_start_vec
   psi_old_vec <- psi_hat_vec
@@ -586,11 +594,12 @@ newton_raphson_piece <- function(df, prm,
   #      (steps <= max_iter) & (max(abs(psi_hat_vec)) < psi_max)){
   
   for(n in max(prm$beta_1_track):1){
-    cat("Solving for psi n = ", n, "\n\n")
+    #cat("Solving for psi n = ", n, "\n\n")
     sub_steps <- 1L
     while (((abs(psi_hat_vec[n] - psi_old_vec[n]) > tol) | sub_steps == 1) &
            (sub_steps <= max_iter)) {
 
+      cat(paste0("psi_", n), " - ", sub_steps, "\n")
       psi_old_vec <- psi_hat_vec
       
       (S_piece <- df %>% calculate_score_piece(psi_hat_vec=psi_hat_vec, 
@@ -606,27 +615,29 @@ newton_raphson_piece <- function(df, prm,
       
       psi_hat_vec[[n]] <- solve(J_piece, S_piece) + psi_hat_vec[n]
       
-            
-      cat(paste0("psi_", n), " - Iteration", sub_steps, "\n")
-      cat("\npsi_hat_old\n")
-      print(psi_old_vec)
-      cat("\npsi_hat_new\n")
-      print(psi_hat_vec)
-      cat("\n\n")
+      psi_piece <- psi_hat_vec[[n]]      
+      cat(psi_piece, "\n")
+      #cat("\npsi_hat_old\n")
+      #print(psi_old_vec)
+      #cat("\npsi_hat_new\n")
+      #print(psi_hat_vec)
+      #cat("\n\n")
       
       
       sub_steps <- sub_steps + 1
     }
     
+    cat("\n", psi_hat_vec, "\n\n")
+    
     sub_steps_vec <- c(sub_steps_vec, sub_steps)
   }
   
-  S_start <-  df %>% calculate_score(psi_hat_vec=psi_start_vec, prm=prm)
-  S_final <- df %>% calculate_score(psi_hat_vec=psi_hat_vec, prm=prm)
+  #S_start <-  df %>% calculate_score(psi_hat_vec=psi_start_vec, prm=prm)
+  #S_final <- df %>% calculate_score(psi_hat_vec=psi_hat_vec, prm=prm)
   
-  cat("S - start vs final")
-  print(S_start)
-  print(S_final)
+  #cat("S - start vs final\n")
+  #print(S_start)
+  #print(S_final)
   
   
   return(list(psi_hat_vec, sub_steps_vec))
@@ -736,7 +747,7 @@ calculate_variance_SLOW <- function(df, prm, psi_hat_vec){
 }
 
 
-calculate_variance <- function(df, prm, psi_hat_vec, trt_models,
+calculate_variance_alt <- function(df, prm, psi_hat_vec, trt_models,
                                suppress_progress=F){
   
   #n_vec <- c()
@@ -863,3 +874,192 @@ calculate_variance <- function(df, prm, psi_hat_vec, trt_models,
   return(VCV)
 }
 
+
+calculate_variance <- function(df, prm, psi_hat_vec,# trt_models,
+                               suppress_progress=F){
+  
+  #n_vec <- c()
+  cat("\nCalculating variance\n")
+  n_vec <- sapply(prm$t_a_vec, 
+                  function(t_a) nrow(df %>% filter(.$ti > t_a)))
+  
+  design_matrices <- lapply(prm$trt_models,
+                            function(model_temp){
+                              mdl_mtrx <- model.matrix(model_temp)
+                              return(mdl_mtrx %>% StripAttr() %>% matrix(., nrow=dim(mdl_mtrx)[[1]])) 
+                            })
+  # design_dims <- lapply(1:length(design_matrices),
+  #                function(k){
+  #                  return(tibble(nrows=dim(design_matrices[[k]])[1],
+  #                                ncols=dim(design_matrices[[k]])[2]))
+  #                }) %>% Reduce(rbind, .)
+  
+  
+  D_cols <- sapply(design_matrices, 
+                   function(D_matrix){
+                     return(D_matrix %>% ncol())
+                   })
+  
+  D_rows <- sapply(design_matrices, 
+                   function(D_matrix){
+                     return(D_matrix %>% nrow())
+                   })
+  
+  cat("Calculating D\n")
+  start.time <- Sys.time()
+  D <- sapply(0:(length(prm$t_a_vec)-1),
+              function(j) {
+                sapply(0:(length(prm$t_a_vec)-1),
+                       function(i) {
+                         if (i == j) {
+                           return(design_matrices[[j+1]])
+                         } else {
+                           return(matrix(0, nrow=D_rows[[i+1]], ncol=D_cols[[j+1]]))
+                         }
+                       }) %>% Reduce(rbind, .)
+              }) %>% Reduce(cbind, .)
+  cat(Sys.time() - start.time,"\n")
+  
+  cat("Calculating D_theta\n")
+  start.time <- Sys.time()
+  #for (beta_1_val in 1:max(prm$beta_1_track))
+  D_theta <- sapply(1:max(prm$beta_1_track),
+                    function(beta_1_val){
+                      #for (k in 0:(length(prm$t_a_vec)-1))
+                      sapply(0:(length(prm$t_a_vec)-1), beta_1_val = beta_1_val,
+                             FUN = function(k, beta_1_val){
+                               if (prm$beta_1_track[[k+1]] == beta_1_val) {
+                                 return(rep(1, n_vec[[k+1]]))
+                               } else {
+                                 return(rep(0, n_vec[[k+1]]))
+                               }
+                             }) %>% Reduce(c, .) %>% matrix(ncol=1)
+                    })
+  if (max(prm$beta_x_track) > 0) {
+    D_theta <- D_theta %>% cbind(
+      #for (beta_x_val in 1:max(prm$beta_x_track))
+      sapply(1:max(prm$beta_x_track), 
+             FUN = function(beta_x_val){
+               #for (k in 0:(length(prm$t_a_vec)-1))
+               sapply(0:(length(prm$t_a_vec)-1), beta_x_val = beta_x_val,
+                      FUN = function(k, beta_x_val) {
+                        if (prm$beta_x_track[[k+1]] == beta_x_val) {
+                          df_temp <- df %>% filter(.$ti > prm$t_a_vec[[k+1]])
+                          return(df_temp$x)
+                        } else {
+                          return(rep(0, n_vec[[k+1]]))
+                        }          
+                      }) %>% Reduce(c, .) %>% matrix(ncol=1)
+               
+             })
+    )
+  }
+  cat(Sys.time() - start.time,"\n")
+  
+  
+ cat("Calculating fit and tau\n")
+ start.time <- Sys.time()
+  fit <- c()
+  tau <- c()
+  for (k in 0:(length(prm$t_a_vec)-1)){
+    df_temp <- df %>% filter( .$ti > prm$t_a_vec[[k+1]]) %>% 
+      calculate_tau_k(prm=prm, psi_hat_vec=psi_hat_vec, a_k=k)
+    fit <- c(fit, df_temp[[paste0('fit_', k)]])
+    tau <- c(tau, df_temp$tau_k)
+  }
+  # fit_list <- lapply(0:(length(prm$t_a_vec)-1), 
+  #               function(k){
+  #                 df_temp <- df %>% filter( .$ti > prm$t_a_vec[[k+1]]) %>% 
+  #                   calculate_tau_k(prm=prm, psi_hat_vec=psi_hat_vec, a_k=k)
+  #                 return(df_temp[[paste0('fit_', k)]])
+  #               })
+  cat(Sys.time() - start.time,"\n")
+  
+  
+  
+  #Jbb <- apply(D, 2,
+  #        function(col_i){
+  #          apply(D, 2,
+  #          function(col_j){
+  #            sum(col_i*col_j*fit*(1-fit))    
+  #          }) %>% matrix(nrow=1)
+  #               
+  #        })
+  #if(!suppress_progress){cat("Calculating Jbb\n")}
+  
+  # start.time <- Sys.time()
+  # Jbb <- t(sapply(1:dim(D)[[2]], function(i){
+  #   sapply(1:dim(D)[[2]], function(j){
+  #     sum(D[,i]*D[,j]*fit*(1-fit), na.rm=T)
+  #   })
+  # }))
+  # end.time <- Sys.time()
+  
+  
+  #start.time <- Sys.time()
+  cat("Calculating Jbb\n")
+  start.time <- Sys.time()
+  Jbb_list <- lapply(1:length(design_matrices), function(k){
+    sapply(1:dim(design_matrices[[k]])[[2]], function(i){
+      sapply(1:dim(design_matrices[[k]])[[2]], function(j){
+        fit_k <- fit_list[[k]]
+        design_k <- design_matrices[[k]]
+        return(sum(design_k[,i]*design_k[,j]*fit_k*(1-fit_k)))
+      })
+    })
+  })
+  
+  Jbb_dims <- sapply(1:length(Jbb_list),
+                function(k){
+                  return(dim(Jbb_list[[k]])[1])
+                })
+  
+  Jbb <- lapply(1:length(Jbb_list),
+          function(i){
+            lapply(1:length(Jbb_list),
+            function(j){
+              if(j==i){
+                return(Jbb_list[[i]])
+              } else{
+                return(matrix(rep(0, Jbb_dims[i]*Jbb_dims[j]),
+                              nrow=Jbb_dims[i]))
+              }
+            }) %>% Reduce(cbind, .)
+          }) %>% Reduce(rbind, .)
+  cat(Sys.time() - start.time,"\n")
+  #end.time <- Sys.time()
+  #cat(end.time - start.time, "\n")
+  #if(!suppress_progress){cat(end.time - start.time, "\n")}
+  
+  cat("Calculating Jtt\n")
+  start.time <- Sys.time()
+  Jtt <- t(sapply(1:dim(D_theta)[[2]], function(i){
+    sapply(1:dim(D_theta)[[2]], function(j){
+      sum(D_theta[,i]*D_theta[,j]*fit*(1-fit)*tau*tau, na.rm=T)
+    })
+  }))
+  cat(Sys.time() - start.time,"\n")
+  
+  cat("Calculating Jtb\n")
+  start.time <- Sys.time()
+  Jtb <- t(sapply(1:dim(D_theta)[[2]], function(i){
+    sapply(1:dim(D)[[2]], function(j){
+      sum(D_theta[,i]*D[,j]*fit*(1-fit)*tau, na.rm=T)
+    })
+  }))
+  cat(Sys.time() - start.time,"\n")
+  
+  cat("Calculating JTT\n")
+  start.time <- Sys.time()
+  JTT <- Jtt - Jtb%*%solve(Jbb)%*%t(Jtb)
+  cat(Sys.time() - start.time,"\n")
+  
+  cat("Calculating VCV\n")
+  start.time <- Sys.time()
+  Jacobian <- df %>% calculate_jacobian(prm=prm, psi_hat_vec=psi_hat_vec)
+  J_inv <- solve(Jacobian)
+  (VCV <- J_inv %*% JTT %*% t(J_inv))
+  cat(Sys.time() - start.time,"\n")
+  
+  return(VCV)
+}
