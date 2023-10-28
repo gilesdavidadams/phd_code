@@ -49,7 +49,6 @@ df_all %>%
          !is.na(rxhomeva)) %>% select(id, rxhomeva) %>% nrow
 
 df_all %>% 
-  #
   filter(totaldialdur > 90,
          !is.na(bmi),
          bmi > 15,
@@ -60,13 +59,17 @@ df_all %>%
          !is.na(vacategory90)) %>%
           distinct(id, .keep_all=T) %>% nrow
 
-
-%>%
-          distinct(id, .keep_all=T)
-         select(rxhomeday90) %>%  table()
-
-
-df_all %>% filter(usemarker == 1) %>% distinct(id, ) %>% nrow
+df_all %>% 
+  filter(totaldialdur > 90,
+         !is.na(bmi),
+         bmi > 15,
+         bmi <= 50,
+         !is.na(sercreat),
+         !is.na(rxhomeva),
+         !is.na(rxhomeday90),
+         !is.na(vacategory90),
+         censorind==0) %>%
+  distinct(id, .keep_all=T) %>% nrow
 
 
 

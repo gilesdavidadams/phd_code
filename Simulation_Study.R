@@ -90,18 +90,20 @@ nr_run <- function(prm){
   cl <- makePSOCKcluster(28)
   registerDoParallel(cl)
   
-  # nr_out <- foreach(seed_curr=1:prm$sims, .combine=rbind, .errorhandling='remove',
-  #                   .export=c(
-  #                     "create_sample", "fit_treatment_models",
-  #                     "calculate_tau_k", "calculate_tau_rsd_m",
-  #                     "calculate_score", "calculate_jacobian", 
-  #                     "calculate_C_k", "calculate_C_m",
-  #                     "newton_raphson_grad",
-  #                     "calculate_variance"
-  #                   ), .packages="tidyverse") %dopar%
-  #   {
+  nr_out_list <- foreach(seed_curr=1:prm$sims, 
+                         .packages=c("tidyverse", "DescTools"), #.combine='comb',
+                          .errorhandling='remove',
+                    .export=c(
+                      "create_sample", "fit_treatment_models",
+                      "calculate_tau_k", "calculate_tau_rsd_m",
+                      "calculate_score", "calculate_jacobian",
+                      "calculate_C_k", "calculate_C_m",
+                      "newton_raphson_grad",
+                      "calculate_variance"
+                    )) %dopar%
+    {
   
-  nr_out_list <- lapply(1:prm$sims, function(simnum){
+  # nr_out_list <- lapply(1:prm$sims, function(simnum){
     
     # if(simnum==1){
     #   progressbar <- txtProgressBar(min=1, max=prm$sims,
@@ -110,6 +112,8 @@ nr_run <- function(prm){
     #   setTxtProgressBar(progressbar, simnum)
     # }
     
+    simnum <- seed_curr
+    cat(simnum)
     nr_out_single <- rep(NA, 2*length(prm$psi_star_vec))
     
     set.seed(simnum)
@@ -119,11 +123,11 @@ nr_run <- function(prm){
     df <- fit_trt_out[[1]]
     prm$trt_models <- fit_trt_out[[2]]
     
-    nri_out <- df %>% newton_raphson_piece(prm=prm) 
+    nri_out <- df %>% newton_raphson_piece(prm=prm, print_results=F) 
     #psi_start_vec=rep(0, length(prm$psi_star_vec)))
     (psi_hat_vec <- nri_out[[1]])
     
-    (var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm))
+    (var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm, print_results=F))
     # trt_models = trt_models))
     #(var_hat_fast <- df %>% calculate_variance_fast(psi_hat_vec=psi_hat_vec, prm=prm))
     
@@ -135,12 +139,14 @@ nr_run <- function(prm){
     #   close(progressbar)
     # }
     
-    return(nr_out_single)
-    })
+    # })
+    }
+  
+   stopCluster(cl)
   
   nr_out <- nr_out_list %>% Reduce(rbind, .)
   results_vec <- calculate_results(nr_out, prm)
-  results_df <- calculate_results_df(nr_out, prm)
+  #results_df <- calculate_results_df(nr_out, prm)
   
   return(list(nr_out=nr_out, results_vec=results_vec, results_df=results_df))
 }
@@ -390,8 +396,11 @@ prm$beta_1_track <- c(1)
 prm$beta_x_track <- c(0)
 prm$psi_lab <- c("psi_1")
 prm$psi_x_star <- c()
-prm$sims <- 3000
+prm$sims <- 300
 prm$censor_date <- 80
+prm$censor_max <- prm$censor_date
+prm$trt_mod_list <- list(
+  c("1"))
 
 
 prm$psi_1_star <- c(log(2))
@@ -401,8 +410,8 @@ nr_out_list <- nr_run(prm=prm)
 print_results(nr_out_list$results_vec, prm)
 prm$censor <- T
 nr_out_list <- nr_run(prm=prm)
-print_results_df(nr_out_list$results_df)
-#print_results(nr_out_list$results_vec, prm)
+# print_results_df(nr_out_list$results_df)
+print_results(nr_out_list$results_vec, prm)
 
 
 prm$psi_1_star <- c(log(1))
