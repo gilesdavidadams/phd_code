@@ -1,3 +1,80 @@
+# Counting participants in slices
+
+df_dialysis <- read_dta("C:/Users/gdadams/OneDrive - The University of Melbourne/ANZREQ-194 Stata datasets/ANZREQ-194 dialysis.dta")
+
+df_all %>% distinct(id, .keep_all=T) %>% nrow()
+
+df_all %>% distinct(id, .keep_all=T) %>%
+  filter(totaldialdur > 90) %>% nrow()
+
+df_all %>% distinct(id, .keep_all=T) %>%
+  filter(totaldialdur > 90,
+         !is.na(bmi),
+         bmi > 15,
+         bmi <= 50) %>% nrow()
+
+df_all %>% distinct(id, .keep_all=T) %>%
+  filter(totaldialdur > 90,
+         !is.na(bmi),
+         bmi > 15,
+         bmi <= 50,
+         !is.na(sercreat)) %>% nrow()
+
+# df_all %>% distinct(id, .keep_all=T) %>%
+#   filter(totaldialdur > 90,
+#          !is.na(bmi),
+#          bmi > 15,
+#          bmi <= 50,
+#          !is.na(sercreat),
+#          !is.na(firstacc)) %>% nrow()
+
+df_all %>% mutate(rx90.na = is.na(rxhomeday90)) %>% 
+  distinct(id, .keep_all=T) %>%
+  filter(totaldialdur > 90,
+         !is.na(bmi),
+         bmi > 15,
+         bmi <= 50,
+         !is.na(sercreat),
+         rx90.na == 0) %>% 
+         nrow
+
+df_all %>%
+  filter(({{t0}} <= 90) & ({{t}} > 90)) %>% #%>%
+  #distinct(id, .keep_all=T) %>%
+  filter(totaldialdur > 90,
+         !is.na(bmi),
+         bmi > 15,
+         bmi <= 50,
+         !is.na(sercreat),
+         !is.na(rxhomeva)) %>% select(id, rxhomeva) %>% nrow
+
+df_all %>% 
+  #
+  filter(totaldialdur > 90,
+         !is.na(bmi),
+         bmi > 15,
+         bmi <= 50,
+         !is.na(sercreat),
+         !is.na(rxhomeva),
+         !is.na(rxhomeday90),
+         !is.na(vacategory90)) %>%
+          distinct(id, .keep_all=T) %>% nrow
+
+
+%>%
+          distinct(id, .keep_all=T)
+         select(rxhomeday90) %>%  table()
+
+
+df_all %>% filter(usemarker == 1) %>% distinct(id, ) %>% nrow
+
+
+
+
+
+
+
+
 # Exploratory analysis of treatment models
 
 #First considering what lag to have on past treatment
@@ -221,32 +298,111 @@ nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
 
 
-switch_counter <- lapply(1:25, function(k){
+switch_counter <- lapply(1:24, function(k){
   var_now <- as.name(paste0("a_", k))
   var_prev <- as.name(paste0("a_", k-1))
   
-  q <- df_cva_25_full %>% 
+  df <- df_cva_25_full %>% 
+        mutate(lastperiod = pmin(lastperiod, (as.integer(C_i) %/% 90)-1)) %>% 
         select({{var_now}}, {{var_prev}}, lastperiod) %>% 
         filter(lastperiod >= k) %>%    
-    #filter(!is.na({{var_now}})) %>% 
-        mutate(switch = ifelse({{var_now}}=={{var_prev}}, 0, 1),
-               dies_now = ifelse(lastperiod==k, 1, 0))
+        mutate(switch_0 = ifelse({{var_now}}!={{var_prev}} & {{var_now}}==0, 1, 0),
+               switch_1 = ifelse({{var_now}}!={{var_prev}} & {{var_now}}==1, 1, 0),
+               dies_0 = ifelse(lastperiod==k & {{var_now}}==0, 1, 0),
+               dies_1 = ifelse(lastperiod==k & {{var_now}}==1, 1, 0)
+               )
   
-  switch_amount <- q %>% select(switch) %>% sum(na.rm=T)
-  switch_deaths <- q %>% filter(switch==1) %>% 
-                  select(dies_now) %>% sum(na.rm=T)
-  total_deaths <- q %>% select(dies_now) %>% sum(na.rm=T)
-  n_alive <- q %>% nrow()
+  switch_0_amount <- df %>% filter(switch_0==1) %>% nrow()
+  switch_1_amount <- df %>% filter(switch_1==1) %>% nrow()
   
-  return(tibble(switches=switch_amount[[1]], 
-                switch_deaths=switch_deaths[[1]],
-                deaths=total_deaths[[1]],
-                n_alive=n_alive))
+  switch_0_deaths <- df %>% filter(switch_0==1) %>% 
+                  select(dies_0) %>% sum(na.rm=T)
+  switch_1_deaths <- df %>% filter(switch_1==1) %>% 
+                      select(dies_1) %>% sum(na.rm=T)
+  
+  deaths_0 <- df %>% filter(dies_0==1) %>% nrow()
+  deaths_1 <- df %>% filter(dies_1==1) %>% nrow()
+  total_deaths_check <- df %>% filter(lastperiod==k) %>% nrow()
+  
+  n_alive_start <- df %>% nrow()
+  n_alive_end <- (df %>% nrow()) - total_deaths_check 
+  
+  return(tibble(period=k,
+                swh_0=switch_0_amount,
+                sww_1=switch_1_amount,
+                sw_tot=switch_0_amount+switch_1_amount,
+                
+                sw_0_dth = switch_0_deaths,
+                sw_1_dth = switch_1_deaths,
+                sw_d_tot = switch_0_deaths + switch_1_deaths,
+                
+                dths_0 = deaths_0,
+                dths_1 = deaths_1,
+                dths_tot = deaths_0 + deaths_1,
+                dths_chk = total_deaths_check,
+                n_alv_strt = n_alive_start,
+                n_alv_end = n_alive_end
+             ))
 }) %>% Reduce(rbind, .) %>% print(n=25)
 
+# df_check <- df_cva_25_full %>%
+#               mutate(dies_now=ifelse(lastperiod==k, 1, 0)
+#                      
+#               filter(lastperiod==k)
 
 
 
+
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#           COUNTING TREATMENT SWITCHES FOR PDvO
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+
+switch_counter_PD <- lapply(1:25, function(k){
+  var_now <- as.name(paste0("a_", k))
+  var_prev <- as.name(paste0("a_", k-1))
+  
+  df <- df_PD_25 %>% 
+    select({{var_now}}, {{var_prev}}, lastperiod) %>% 
+    filter(lastperiod >= k) %>%    
+    mutate(switch_0 = ifelse({{var_now}}!={{var_prev}} & {{var_now}}==0, 1, 0),
+           switch_1 = ifelse({{var_now}}!={{var_prev}} & {{var_now}}==1, 1, 0),
+           dies_0 = ifelse(lastperiod==k & {{var_now}}==0, 1, 0),
+           dies_1 = ifelse(lastperiod==k & {{var_now}}==1, 1, 0)
+    )
+  
+  switch_0_amount <- df %>% filter(switch_0==1) %>% nrow()
+  switch_1_amount <- df %>% filter(switch_1==1) %>% nrow()
+  
+  switch_0_deaths <- df %>% filter(switch_0==1) %>% 
+    select(dies_0) %>% sum(na.rm=T)
+  switch_1_deaths <- df %>% filter(switch_1==1) %>% 
+    select(dies_1) %>% sum(na.rm=T)
+  
+  deaths_0 <- df %>% filter(dies_0==1) %>% nrow()
+  deaths_1 <- df %>% filter(dies_1==1) %>% nrow()
+  total_deaths_check <- df %>% filter(lastperiod==k) %>% nrow()
+  
+  n_alive_start <- df %>% nrow()
+  n_alive_end <- (df %>% nrow()) - total_deaths_check 
+  
+  return(tibble(period=k,
+                swh_0=switch_0_amount,
+                sww_1=switch_1_amount,
+                sw_tot=switch_0_amount+switch_1_amount,
+                
+                sw_0_dth = switch_0_deaths,
+                sw_1_dth = switch_1_deaths,
+                sw_d_tot = switch_0_deaths + switch_1_deaths,
+                
+                dths_0 = deaths_0,
+                dths_1 = deaths_1,
+                dths_tot = deaths_0 + deaths_1,
+                dths_chk = total_deaths_check,
+                n_alv_strt = n_alive_start,
+                n_alv_end = n_alive_end
+  ))
+}) %>% Reduce(rbind, .) %>% print(n=25)
 
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
 #           BUILDING MODELS FOR MA
@@ -541,4 +697,77 @@ nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
 
 (VCV <- df %>% calculate_variance(prm, psi_hat_vec, trt_models))
 nr_out_list <- df_3_wide_run(prm)
+
+################################
+### INVERSE VARIANCE WEIGHTING
+#################################
+var_indiv <- ste_indiv^2 %>% select(-c(period))
+df_indiv_less <- df_indiv %>% select(-c(period))
+
+ivwa <- lapply(1:7, 
+  function(k){
+    sum_inv_var <- (1/var_indiv[k, (k+1):7]) %>% sum()  
+    mean_inv_weight <- ((df_indiv[k, (k+1):7] / var_indiv[k, (k+1):7]) %>% sum()) /  sum_inv_var
+        tibble(period=k-1, 
+            psi_avg = mean_inv_weight,
+            var_avg = 6/sum_inv_var,
+            ste_avg = sqrt(6/sum_inv_var))
+  }) %>% Reduce(rbind, .) #%>% ggplot(aes(x=period, y=psi_avg)) + geom_point() #+ ylim(0,2)
+
+ivwa 
+#%>% Reduce(rbind, .) %>% ggplot(aes(x=period, y=psi_avg)) + geom_point()
+
+
+
+
+
+
+psi_parts_vec <- c(1, 5, 10, 15, 20)
+d=2
+
+test_out <- tibble()
+
+test_out <- lapply(psi_parts_vec,
+       function(psi_part){
+         tibble_row <- tibble(psi=psi_part)
+         for (a_curr in (0:(length(prm$t_a_vec)-1))){
+           if (prm$beta_1_track[[a_curr+1]] == d) {
+             
+             df_temp <- df %>% calculate_tau_k(prm=prm, 
+                                               psi_hat_vec=c(0, -psi_part),
+                                               a_k=a_curr)
+             
+             a_k <- as.name(paste0("a_", a_curr))
+             fit_k <- as.name(paste0("fit_", a_curr))
+             
+             df_temp <- df_temp %>% mutate(
+               S_i := ifelse((is.na({{a_k}}) | is.na({{fit_k}}) | is.na(tau_k)), 0,
+                             ({{a_k}} - {{fit_k}})*tau_k)
+             )
+             
+             S_inc <- df_temp %>% select(S_i) %>% sum()
+             
+             tibble_row <- tibble_row %>% add_column("{a_k}":= S_inc)
+           }
+           
+         }
+         return(tibble_row)
+       }) %>% Reduce(rbind, .)
+
+test_out %>% pivot_longer(cols = !psi) %>% 
+  ggplot(aes(x=psi, y=value, group=name)) +
+  geom_point() + geom_line()
+
+
+
+
+
+
+
+
+
+
+
+
+
 

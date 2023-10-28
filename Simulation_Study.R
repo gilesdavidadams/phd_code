@@ -90,42 +90,55 @@ nr_run <- function(prm){
   cl <- makePSOCKcluster(28)
   registerDoParallel(cl)
   
-  nr_out <- foreach(seed_curr=1:prm$sims, .combine=rbind, .errorhandling='remove',
-                    .export=c(
-                      "create_sample", "fit_treatment_models",
-                      "calculate_tau_k", "calculate_tau_rsd_m",
-                      "calculate_score", "calculate_jacobian", 
-                      "calculate_C_k", "calculate_C_m",
-                      "newton_raphson_grad",
-                      "calculate_variance"
-                    ), .packages="tidyverse") %dopar%
-    {
-      
-      nr_out_single <- rep(NA, 2*length(prm$psi_star_vec))
-      
-      set.seed(seed_curr)
-      df <- create_sample(prm=prm)
-      
-      fit_trt_out <- df %>% fit_treatment_models(prm=prm)
-      df <- fit_trt_out[[1]]
-      prm$trt_models <- fit_trt_out[[2]]
-      
-      nri_out <- df %>% newton_raphson_piece(prm=prm) 
-                                            #psi_start_vec=rep(0, length(prm$psi_star_vec)))
-      (psi_hat_vec <- nri_out[[1]])
-      
-      (var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm,
-                                            trt_models = trt_models))
-      #(var_hat_fast <- df %>% calculate_variance_fast(psi_hat_vec=psi_hat_vec, prm=prm))
-      
-      if(max(diag(var_hat)) < 1) {
-        nr_out_single <- c(psi_hat_vec, diag(var_hat))
-      }
-      
-      nr_out_single
-    }
+  # nr_out <- foreach(seed_curr=1:prm$sims, .combine=rbind, .errorhandling='remove',
+  #                   .export=c(
+  #                     "create_sample", "fit_treatment_models",
+  #                     "calculate_tau_k", "calculate_tau_rsd_m",
+  #                     "calculate_score", "calculate_jacobian", 
+  #                     "calculate_C_k", "calculate_C_m",
+  #                     "newton_raphson_grad",
+  #                     "calculate_variance"
+  #                   ), .packages="tidyverse") %dopar%
+  #   {
   
-  stopCluster(cl)
+  nr_out_list <- lapply(1:prm$sims, function(simnum){
+    
+    # if(simnum==1){
+    #   progressbar <- txtProgressBar(min=1, max=prm$sims,
+    #                                 style=3, width=50, char="=")
+    # } else {
+    #   setTxtProgressBar(progressbar, simnum)
+    # }
+    
+    nr_out_single <- rep(NA, 2*length(prm$psi_star_vec))
+    
+    set.seed(simnum)
+    df <- create_sample(prm=prm)
+    
+    fit_trt_out <- df %>% fit_treatment_models(prm=prm)
+    df <- fit_trt_out[[1]]
+    prm$trt_models <- fit_trt_out[[2]]
+    
+    nri_out <- df %>% newton_raphson_piece(prm=prm) 
+    #psi_start_vec=rep(0, length(prm$psi_star_vec)))
+    (psi_hat_vec <- nri_out[[1]])
+    
+    (var_hat <- df %>% calculate_variance(psi_hat_vec=psi_hat_vec, prm=prm))
+    # trt_models = trt_models))
+    #(var_hat_fast <- df %>% calculate_variance_fast(psi_hat_vec=psi_hat_vec, prm=prm))
+    
+    if(max(diag(var_hat)) < 1) {
+      nr_out_single <- c(psi_hat_vec, diag(var_hat))
+    }
+    
+    # if(simnum==prm$sims){
+    #   close(progressbar)
+    # }
+    
+    return(nr_out_single)
+    })
+  
+  nr_out <- nr_out_list %>% Reduce(rbind, .)
   results_vec <- calculate_results(nr_out, prm)
   results_df <- calculate_results_df(nr_out, prm)
   
@@ -578,6 +591,22 @@ print_results(nr_out_list$results_vec, prm)
 
 
 
+# 
+# prm$sim_label <- "(const_1) -> (const_2)"
+# prm$t_a_vec <- c(0, 5)
+# prm$expmean <- 50
+# prm$n_trgt <- 10000
+# prm$beta_1_track <- c(1, 2)
+# prm$beta_x_track <- c(0, 0)
+# prm$psi_lab <- c("psi_1", "psi_2")
+# prm$sims <- 1000
+# prm$censor_date <- 80
+# prm$trt_mod_list <- list(
+#   c("1"), 
+#   c("1", "a_0")
+# )
+
+
 prm$sim_label <- "(const_1) -> (const_2)"
 prm$t_a_vec <- c(0, 35)
 prm$expmean <- 50
@@ -586,24 +615,6 @@ prm$beta_1_track <- c(1, 2)
 prm$beta_x_track <- c(0, 0)
 prm$psi_lab <- c("psi_1", "psi_2")
 prm$sims <- 100
-prm$censor_date <- 80
-prm$trt_mod_list <- list(
-  c("1"), 
-  c("1", "a_0")
-)
-
-
-
-
-
-prm$sim_label <- "(const_1) -> (const_2)"
-prm$t_a_vec <- c(0, 5)
-prm$expmean <- 50
-prm$n_trgt <- 10000
-prm$beta_1_track <- c(1, 2)
-prm$beta_x_track <- c(0, 0)
-prm$psi_lab <- c("psi_1", "psi_2")
-prm$sims <- 1000
 prm$censor_date <- 80
 prm$trt_mod_list <- list(
   c("1"), 

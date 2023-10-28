@@ -70,15 +70,15 @@ df_baseline$bmi_cat <- cut(df_baseline$bmi, c(0, 20, 25, 30, 100))
 
 #choose variables/columns that we want to keep
 df_reduced <- df_all %>% 
-                        #filter(usemarker == 1 & censorind == 0) %>%
-                        select(c(id, sequno, firstdate, finaldate, deathdate, deadind,
-                            survtime, rxhomeva, "_t", "_t0",
-                            age, sex, racereduced, sercreat, cig,
-                            referral3, rxhome, censordate, censorind,
-                            lu, pv,
-                            )) %>%
+  #filter(usemarker == 1 & censorind == 0) %>%
+  select(c(id, sequno, firstdate, finaldate, deathdate, deadind,
+           survtime, rxhomeva, "_t", "_t0",
+           age, sex, racereduced, sercreat, cig,
+           referral3, rxhome, censordate, censorind,
+           lu, pv,
+  )) %>%
   #select(-c(sequno, firstdate, finaldate, deathdate, survtime)) %>%
-                  rename(t0 = "_t0", t="_t", smoke=cig, latereferral=referral3)
+  rename(t0 = "_t0", t="_t", smoke=cig, latereferral=referral3)
 
 
 
@@ -104,7 +104,7 @@ rxhomeva_sum_cols <- c()
 for(i in 0:max(df_split$rxhomeva, na.rm=TRUE)){
   if(i==0){
     progressbar <- txtProgressBar(min=0, max=max(df_split$rxhomeva, na.rm=TRUE),
-                                         style=3, width=50, char="=")}
+                                  style=3, width=50, char="=")}
   else{
     setTxtProgressBar(progressbar, i) }
   
@@ -132,9 +132,9 @@ df_split <- df_split %>%
 
 #Calculates ti for each individual
 df_split <- df_split %>% 
-            group_by(id) %>%
-            mutate(ti=max(t)) %>%
-            ungroup()
+  group_by(id) %>%
+  mutate(ti=max(t)) %>%
+  ungroup()
 
 #Calculates which treatment the patient is on the longest
 # within each period
@@ -155,11 +155,11 @@ df_90_original <- df_split %>%
 
 
 df_90 <- df_90_original %>% 
-            group_by(id) %>% 
-            mutate(dies=max(deadind)) %>% 
-            ungroup() %>%
-            select(-c(deadind, tk)) %>%
-            rename(ai = rxhomeva_90)
+  group_by(id) %>% 
+  mutate(dies=max(deadind)) %>% 
+  ungroup() %>%
+  select(-c(deadind, tk)) %>%
+  rename(ai = rxhomeva_90)
 
 
 
@@ -174,28 +174,28 @@ df_90_incPD <- df_90 %>%
   summarise(has_PD = max(as.numeric(is.PD)))
 
 df_baseline <- df_baseline %>%
-                left_join(df_90_NA, by="id") %>%
-                left_join(df_90_incPD, by="id")
+  left_join(df_90_NA, by="id") %>%
+  left_join(df_90_incPD, by="id")
 
 
 
 
 df_90 <- df_90 %>%
-          left_join(df_90_NA, by="id") %>%
-          filter(has_NA != 1) %>% 
-          rename(ai_finest=ai) %>%
-          filter(ti > 90)
+  left_join(df_90_NA, by="id") %>%
+  filter(has_NA != 1) %>% 
+  rename(ai_finest=ai) %>%
+  filter(ti > 90)
 
 
 
 df_90_PD <- df_90 
 
 df_90_hasPD <- df_90 %>% group_by(id) %>%
-      summarise(has.PD = max(as.numeric(is.PD)))
+  summarise(has.PD = max(as.numeric(is.PD)))
 
 df_90 <- df_90 %>%
-          left_join(df_90_hasPD, by="id") %>%
-          filter(ti>90)
+  left_join(df_90_hasPD, by="id") %>%
+  filter(ti>90)
 
 #df_90_wide <- df_90 %>% select(-c(ai_NA, has_NA, is.PD, has.PD)) %>%
 #              pivot_wider(names_from = period,
@@ -203,10 +203,10 @@ df_90 <- df_90 %>%
 #                    values_from = ai_finest)
 
 df_90_home <- df_90 %>% mutate(HvF = ifelse(ai_finest %in% c(0,1,2), 1, 0)) %>%
-                        select(c(id, period, HvF)) %>%
-                        pivot_wider(names_from = period,
-                        names_prefix = "HvF_",
-                        values_from = HvF)
+  select(c(id, period, HvF)) %>%
+  pivot_wider(names_from = period,
+              names_prefix = "HvF_",
+              values_from = HvF)
 
 # df_CVC_vs_AVFG_long <- df_90 %>%
 #                         filter(has.PD != 1) %>%
@@ -220,10 +220,10 @@ df_CVC_vs_AVFG_long <- df_90 %>%
 
 
 df_CVC_vs_AVFG_wide <- df_CVC_vs_AVFG_long %>% 
-                      select(c(id, period, ti, dies, ai)) %>%
-                      pivot_wider(names_from = period,
-                                  names_prefix = "a_",
-                                  values_from = ai)
+  select(c(id, period, ti, dies, ai)) %>%
+  pivot_wider(names_from = period,
+              names_prefix = "a_",
+              values_from = ai)
 
 
 
@@ -234,14 +234,14 @@ df_CVC_vs_AVFG_wide <- df_CVC_vs_AVFG_long %>%
 df_cva <- df_CVC_vs_AVFG_wide
 df_cva <- df_cva %>% left_join(df_baseline, by="id")
 df_cva <- df_cva %>% mutate(sex=as.factor(sex),
-                    race=factor(race, labels = c("NZ maori/pacific" = 1,
-                                                 "Aus Indigenous" = 2,
-                                                 "Asian" = 3,
-                                                 "White/other" = 4)),
-                    firstyear = as.factor(format(firstdate,"%Y")),
-                    smoke = as.factor(smoke),
-                    x=0
-                    )
+                            race=factor(race, labels = c("NZ maori/pacific" = 1,
+                                                         "Aus Indigenous" = 2,
+                                                         "Asian" = 3,
+                                                         "White/other" = 4)),
+                            firstyear = as.factor(format(firstdate,"%Y")),
+                            smoke = as.factor(smoke),
+                            x=0
+)
 df_cva <- df_cva %>% filter(!is.na(sercreat)) %>% 
   filter(!latereferral=="") %>%
   filter(smoke!=4) %>%
@@ -313,13 +313,13 @@ var_vec <- ste^2
 tibble(psi=psi_hat_vec, ste=ste, VCV=ste^2)
 
 df_psi_27 <- lapply(1:(prm_27_full$beta_1_track %>% length()),
-                 function(k){
-                   beta_value <- prm_27_full$beta_1_track[k]
-                   psi_now <- psi_hat_vec_27[beta_value]
-                   ste_now <- ste[beta_value]
-                   
-                   tibble(period=k-1, psi=-psi_now, ste=ste_now)
-                 }) %>% Reduce(rbind, .)
+                    function(k){
+                      beta_value <- prm_27_full$beta_1_track[k]
+                      psi_now <- psi_hat_vec_27[beta_value]
+                      ste_now <- ste[beta_value]
+                      
+                      tibble(period=k-1, psi=-psi_now, ste=ste_now)
+                    }) %>% Reduce(rbind, .)
 df_psi_27 %>% ggplot(aes(x=period, y=psi)) + 
   geom_point() +
   geom_errorbar(aes(ymin=psi-2*ste, ymax=psi+2*ste),
@@ -328,29 +328,29 @@ df_psi_27 %>% ggplot(aes(x=period, y=psi)) +
 # INVERSE VARIANCE WEIGHTED AVERAGING
 
 ivw_psi_hat <- sapply(1:26,
-      function(j){
-        if(j==1){
-          weights <- var_vec[1:2]
-          psi_hat_part <- psi_hat_vec[1:2]
-        } else if (j==16){
-          weights <- var_vec[15:16]
-          psi_hat_part <- psi_hat_vec[15:16]
-        } else if (j >= 17) {
-          psi_hat_part <- psi_hat_vec[16]
-          weights <- 1
-        } else {
-          weights <- var_vec[(j-1):(j+1)]
-          psi_hat_part <- psi_hat_vec[(j-1):(j+1)]
-        }
-        return(sum(psi_hat_part/weights)/(sum(1/weights)))
-      })
+                      function(j){
+                        if(j==1){
+                          weights <- var_vec[1:2]
+                          psi_hat_part <- psi_hat_vec[1:2]
+                        } else if (j==16){
+                          weights <- var_vec[15:16]
+                          psi_hat_part <- psi_hat_vec[15:16]
+                        } else if (j >= 17) {
+                          psi_hat_part <- psi_hat_vec[16]
+                          weights <- 1
+                        } else {
+                          weights <- var_vec[(j-1):(j+1)]
+                          psi_hat_part <- psi_hat_vec[(j-1):(j+1)]
+                        }
+                        return(sum(psi_hat_part/weights)/(sum(1/weights)))
+                      })
 
 df_ivw <- lapply(1:(prm_27_full$beta_1_track %>% length()),
-            function(k){
-              psi_now <- ivw_psi_hat[prm_27_full$beta_1_track[k]]
-              
-              tibble(period=k-1, psi=-psi_now)
-            }) %>% Reduce(rbind, .)
+                 function(k){
+                   psi_now <- ivw_psi_hat[prm_27_full$beta_1_track[k]]
+                   
+                   tibble(period=k-1, psi=-psi_now)
+                 }) %>% Reduce(rbind, .)
 
 df_ivw %>% ggplot(aes(x=period, y=psi)) + geom_point()
 
@@ -360,41 +360,41 @@ df_ivw %>% ggplot(aes(x=period, y=psi)) + geom_point()
 
 
 df_ivw_5 <- lapply(1:26,
-                      function(j){
-                        if(j==1){
-                          items <- 1:3
-                          # weights <- var_vec[1:3]
-                          # psi_hat_part <- psi_hat_vec[1:3]
-                        } else if(j==2) {
-                          items <- 1:4
-                          # weights <- var_vec[1:4]
-                          # psi_hat_part <- psi_hat_vec[1:4]
-                        } else if (j==15){
-                          items <- 13:16
-                          # weights <- var_vec[13:16]
-                          # psi_hat_part <- psi_hat_vec[13:16]
-                        } else if (j==16){
-                          items <- 14:16
-                          # weights <- var_vec[14:16]
-                          # psi_hat_part <- psi_hat_vec[14:16]
-                        } else if (j >= 17) {
-                          items <- 17
-                          # psi_hat_part <- psi_hat_vec[16]
-                          # weights <- 1
-                        } else {
-                          items <- (j-2):(j+2)
-                          # weights <- var_vec[(j-2):(j+2)]
-                          # psi_hat_part <- psi_hat_vec[(j-2):(j+2)]
-                        }
-                        weights <- var_vec[items]
-                        psi_hat_part <- psi_hat_vec[items]
-                        #var_parts <- var_vec[items]
-                        
-                        psi_avg <- sum(psi_hat_part/weights)/(sum(1/weights))
-                        var_avg <- sum(outer(1/sqrt(weights), 1/sqrt(weights)))/((sum(1/weights))^2)
-                          # (sum(1/weights))^(-1)*(sum(outer(1/sqrt(weights, 1/weights)))
-                        return(tibble(period=j, psi=-psi_avg, var=var_avg, ste=sqrt(var_avg)))
-                      }) %>% Reduce(rbind, .)
+                   function(j){
+                     if(j==1){
+                       items <- 1:3
+                       # weights <- var_vec[1:3]
+                       # psi_hat_part <- psi_hat_vec[1:3]
+                     } else if(j==2) {
+                       items <- 1:4
+                       # weights <- var_vec[1:4]
+                       # psi_hat_part <- psi_hat_vec[1:4]
+                     } else if (j==15){
+                       items <- 13:16
+                       # weights <- var_vec[13:16]
+                       # psi_hat_part <- psi_hat_vec[13:16]
+                     } else if (j==16){
+                       items <- 14:16
+                       # weights <- var_vec[14:16]
+                       # psi_hat_part <- psi_hat_vec[14:16]
+                     } else if (j >= 17) {
+                       items <- 17
+                       # psi_hat_part <- psi_hat_vec[16]
+                       # weights <- 1
+                     } else {
+                       items <- (j-2):(j+2)
+                       # weights <- var_vec[(j-2):(j+2)]
+                       # psi_hat_part <- psi_hat_vec[(j-2):(j+2)]
+                     }
+                     weights <- var_vec[items]
+                     psi_hat_part <- psi_hat_vec[items]
+                     #var_parts <- var_vec[items]
+                     
+                     psi_avg <- sum(psi_hat_part/weights)/(sum(1/weights))
+                     var_avg <- sum(outer(1/sqrt(weights), 1/sqrt(weights)))/((sum(1/weights))^2)
+                     # (sum(1/weights))^(-1)*(sum(outer(1/sqrt(weights, 1/weights)))
+                     return(tibble(period=j, psi=-psi_avg, var=var_avg, ste=sqrt(var_avg)))
+                   }) %>% Reduce(rbind, .)
 
 # df_ivw_5 <- lapply(1:(prm_27_full$beta_1_track %>% length()),
 #                  function(k){
@@ -411,17 +411,17 @@ df_ivw_5 %>% ggplot(aes(x=period, y=psi)) +
 
 
 +# prm_20_full <- prm_20
-# 
-# for(i in 20:32){
-#   
-#   prm_20_full$trt_mod_list_full <- lapply(0:i, function(k) {
-#     mdl_k <- c("1", "age", "sex", "race", "smoke", 
-#                "sercreat", "latereferral", "cad", "lung", "pvd",
-#                "diabetes", "bmi_cat")
-#     return(mdl_k) })
-#   
-#   result <- tryCatch(
-#     fit_trtd_out <- df_cva_20 %>% fit_treatment_models(prm=prm_20_full),
+  # 
+  # for(i in 20:32){
+  #   
+  #   prm_20_full$trt_mod_list_full <- lapply(0:i, function(k) {
+  #     mdl_k <- c("1", "age", "sex", "race", "smoke", 
+  #                "sercreat", "latereferral", "cad", "lung", "pvd",
+  #                "diabetes", "bmi_cat")
+  #     return(mdl_k) })
+  #   
+  #   result <- tryCatch(
+  #     fit_trtd_out <- df_cva_20 %>% fit_treatment_models(prm=prm_20_full),
 #     
 #     warning=function(w){message(paste0("Warning at i=", i))}
 #   )
@@ -444,8 +444,8 @@ df_ivw_5 %>% ggplot(aes(x=period, y=psi)) +
 
 
 n=15
- df_two_stage_list <- tibble()
- for(n in 1:15){
+df_two_stage_list <- tibble()
+for(n in 1:15){
   #for(n in 15:20){
   prm_temp <- prm_20_full
   prm_temp$beta_1_track <- c(rep(1, n), rep(2, 20-n))
@@ -620,40 +620,40 @@ lapply(0:15, function(i){
 psi_indiv_list <- list()
 ste_indiv_list <- list()
 for(i in 0:8){
-#for(i in 7:10){
-#psi_indiv_list <- lapply(1:10,
+  #for(i in 7:10){
+  #psi_indiv_list <- lapply(1:10,
   #function(i){
-    if(i > 0){
-      prm_25_full$beta_1_track <- c(1:i, rep(i+1, 26-i))
-    } else {
-      prm_25_full$beta_1_track <- rep(1,26)
-    }
-    
-    # if(i == 0){
-    #   psi_start_vec <- c(0)
-    # } else if(i == 1){
-    #   psi_start_vec <- psi_indiv_list[[i]]
-    #   psi_start_vec <- c(psi_start_vec, psi_start_vec)
-    # } else {
-    #   psi_start_vec <- psi_indiv_list[[i]]
-    #   psi_start_vec <- c(psi_start_vec[1:(i-1)],
-    #                    psi_start_vec[i],
-    #                    psi_start_vec[i:length(psi_start_vec)])
-    # }
-    
-    nr_out <- df_cva_25_full %>% newton_raphson_piece(prm=prm_25_full, #tol=0.01,
-                                                      #psi_start_vec=psi_start_vec,
-                                                      psi_max_vec = c(rep(4,7), rep(3,4)),
-                                                      max_iter=200)
-    psi_hat_vec <- nr_out[[1]]
-    # return(tibble(psi_hat=psi_hat_vec))
+  if(i > 0){
+    prm_25_full$beta_1_track <- c(1:i, rep(i+1, 26-i))
+  } else {
+    prm_25_full$beta_1_track <- rep(1,26)
+  }
+  
+  # if(i == 0){
+  #   psi_start_vec <- c(0)
+  # } else if(i == 1){
+  #   psi_start_vec <- psi_indiv_list[[i]]
+  #   psi_start_vec <- c(psi_start_vec, psi_start_vec)
+  # } else {
+  #   psi_start_vec <- psi_indiv_list[[i]]
+  #   psi_start_vec <- c(psi_start_vec[1:(i-1)],
+  #                    psi_start_vec[i],
+  #                    psi_start_vec[i:length(psi_start_vec)])
+  # }
+  
+  nr_out <- df_cva_25_full %>% newton_raphson_piece(prm=prm_25_full, #tol=0.01,
+                                                    #psi_start_vec=psi_start_vec,
+                                                    psi_max_vec = c(rep(4,7), rep(3,4)),
+                                                    max_iter=200)
+  psi_hat_vec <- nr_out[[1]]
+  # return(tibble(psi_hat=psi_hat_vec))
   #})
   psi_indiv_list <- psi_indiv_list %>% append(., list(psi_hat_vec))
   
   # VCV <- df_cva_25_full %>% calculate_variance(prm=prm_25_full,
   #                                      psi_hat_vec=psi_hat_vec)
   #                                      #trt_models=trt_models_25_full)
-
+  
   # ste <- sapply(1:ifelse(i==0, 1, dim(VCV)[[1]]),
   #               function(k){
   #                 return(ifelse(i==0, sqrt(VCV), sqrt(VCV[k,k])))
@@ -670,23 +670,23 @@ for(i in 1:length(psi_indiv_list)){
   ste_hat <- ste_indiv_list[[i]]
   
   psi_by_period <- sapply(1:26, 
-                    function(k){
-                      if(k < length(psi_hat)){
-                        return(-psi_hat[k])
-                      } else {
-                        return(-psi_hat[length(psi_hat)])
-                      }
-                    })
+                          function(k){
+                            if(k < length(psi_hat)){
+                              return(-psi_hat[k])
+                            } else {
+                              return(-psi_hat[length(psi_hat)])
+                            }
+                          })
   
   ste_by_period <- sapply(1:26, 
-                    function(k){
-                      if(k < length(ste_hat)){
-                        return(ste_hat[k])
-                      } else {
-                        return(ste_hat[length(ste_hat)])
-                      }
-                    })
-
+                          function(k){
+                            if(k < length(ste_hat)){
+                              return(ste_hat[k])
+                            } else {
+                              return(ste_hat[length(ste_hat)])
+                            }
+                          })
+  
   psi_col <- as.name(paste0("itr_", i-1))
   #ste_col <- as.name(paste0("itr_", i, "_ste"))
   df_indiv <- df_indiv %>% add_column("{psi_col}" := psi_by_period)
@@ -697,33 +697,33 @@ for(i in 1:length(psi_indiv_list)){
 
 df_two_stage_list <- tibble()
 for(n in 1:15){
-#for(n in 15:20){
-      prm_temp <- prm_25_full
-      prm_temp$beta_1_track <- c(rep(1, n), rep(2, 25-n))
-      
-      nr_out <- df_cva_25_full %>%
-                  newton_raphson_piece(prm=prm_temp,
-                                       psi_max = 4,
-                                       max_iter=200)
-      
-      psi_hat_vec <- nr_out[[1]]
-      
-      VCV <- df_cva_25_full %>% calculate_variance(prm=prm_temp,
-                                            psi_hat_vec=psi_hat_vec)
-                                            #trt_models=trt_models_25_full)
-
-      ste <- sapply(1:dim(VCV)[[1]],
-                     function(k){
-                       return(sqrt(VCV[k,k]))
-                     })
-      
-      df_two_stage_list <- list(df_two_stage_list,
-            tibble(psi_1 = psi_hat_vec[1],
-             psi_2 = psi_hat_vec[2],
-             ste_1 = ste[1],
-             ste_2 = ste[2]))
-      
-    }
+  #for(n in 15:20){
+  prm_temp <- prm_25_full
+  prm_temp$beta_1_track <- c(rep(1, n), rep(2, 25-n))
+  
+  nr_out <- df_cva_25_full %>%
+    newton_raphson_piece(prm=prm_temp,
+                         psi_max = 4,
+                         max_iter=200)
+  
+  psi_hat_vec <- nr_out[[1]]
+  
+  VCV <- df_cva_25_full %>% calculate_variance(prm=prm_temp,
+                                               psi_hat_vec=psi_hat_vec)
+  #trt_models=trt_models_25_full)
+  
+  ste <- sapply(1:dim(VCV)[[1]],
+                function(k){
+                  return(sqrt(VCV[k,k]))
+                })
+  
+  df_two_stage_list <- list(df_two_stage_list,
+                            tibble(psi_1 = psi_hat_vec[1],
+                                   psi_2 = psi_hat_vec[2],
+                                   ste_1 = ste[1],
+                                   ste_2 = ste[2]))
+  
+}
 
 
 
@@ -738,7 +738,7 @@ for(i in 0:8){
   } else {
     prm_25_full$beta_1_track <- rep(1,26)
   }
-
+  
   nr_out <- df_cva_25_full %>% newton_raphson_piece(prm=prm_25_full, #tol=0.01,
                                                     #psi_start_vec=psi_start_vec,
                                                     psi_max_vec = c(rep(4,7), rep(3,4)),
@@ -747,7 +747,7 @@ for(i in 0:8){
   # return(tibble(psi_hat=psi_hat_vec))
   #})
   psi_indiv_list <- psi_indiv_list %>% append(., list(psi_hat_vec))
-
+  
 }
 
 
@@ -797,8 +797,8 @@ prm$beta_1_track <- c(beta_1_start, rep(10, 26-length(beta_1_start)))
 psi_start <- c(psi_hat_8[1:6], psi_hat_8[[7]], rep(psi_hat_8[[8]],3))
 
 nr_out_9 <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
-                                     psi_start_vec=psi_start,
-                                     print_results=T)
+                                       psi_start_vec=psi_start,
+                                       print_results=T)
 
 
 psi_hat_9 <- nr_out_9[[1]]
@@ -844,7 +844,7 @@ for(i in 0:4){
   } else {
     prm$beta_1_track <- c(rep(1,4), rep(2,4), rep(3, 18))
   }
-
+  
   if(i == 0){
     psi_start <- rep(0, 3)
   } else if(i == 1){
@@ -855,7 +855,7 @@ for(i in 0:4){
   } else{
     psi_start <- c(psi_hat_old[[1]], psi_hat_old[[2]], psi_hat_old[[4]])
   }
-
+  
   nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
                                        psi_start_vec=psi_start,
                                        print_results=T)
@@ -863,12 +863,12 @@ for(i in 0:4){
   VCV <- df %>% calculate_variance(prm, psi_hat_old)
   
   ste_vec <- sapply(1:(dim(VCV)[[1]]), 
-                     function(k){VCV[k,k] %>% sqrt()})
+                    function(k){VCV[k,k] %>% sqrt()})
   
   psi_by_period <- sapply(1:9, 
-                    function(k){
-                      -psi_hat_old[[prm$beta_1_track[[k]]]]  
-                    })
+                          function(k){
+                            -psi_hat_old[[prm$beta_1_track[[k]]]]  
+                          })
   ste_by_period <- sapply(1:9, 
                           function(k){
                             ste_vec[[prm$beta_1_track[[k]]]]  
@@ -925,7 +925,7 @@ for(i in 0:8){
   }
   
   if(i == 0){ psi_start <- NA}
-   else {
+  else {
     psi_start <- psi_hat_old
   }
   
@@ -935,14 +935,14 @@ for(i in 0:8){
   
   
   nr_out_piecewise <- df_cva_25_full %>% 
-                            newton_raphson_piece(prm=prm_25_full)#, tol=0.01,
-                                       #psi_start_vec=psi_start,
-                                       #max_sub_iter = 20,
-                                       #print_results=T)
+    newton_raphson_piece(prm=prm_25_full)#, tol=0.01,
+  #psi_start_vec=psi_start,
+  #max_sub_iter = 20,
+  #print_results=T)
   psi_hat <- nr_out_piecewise[[1]]
   
   VCV <- df %>% calculate_variance(prm, psi_hat)#, trt_models)
-    ste_vec <- sapply(1:(dim(VCV)[[1]]), 
+  ste_vec <- sapply(1:(dim(VCV)[[1]]), 
                     function(k){VCV[k,k] %>% sqrt()})
   
   
@@ -952,7 +952,7 @@ for(i in 0:8){
   }  
   
   psi_col <- as.name(paste0("itr_", i))
-
+  
   df_Lyle_psis <- df_Lyle_psis %>% add_column("{psi_col}" := psi_hat)
   # df_Lyle_stes <- df_Lyle_stes %>% add_column("{psi_col}" := ste_vec)
   
@@ -976,13 +976,13 @@ for(i in 0:8){
   ste_hat <- matrix_lyle_stes[1:5, i+2]
   
   psi_by_period <- sapply(1:26, 
-                    function(k){
-                      return(-psi_hat[prm$beta_1_track[[k]]])
-                    })
+                          function(k){
+                            return(-psi_hat[prm$beta_1_track[[k]]])
+                          })
   ste_by_period <- sapply(1:26, 
-                       function(k){
-                         return(ste_hat[prm$beta_1_track[[k]]])
-                       })
+                          function(k){
+                            return(ste_hat[prm$beta_1_track[[k]]])
+                          })
   psi_col <- as.name(paste0("itr_", i))
   df_lyle <- df_lyle %>% add_column("{psi_col}" := psi_by_period)
   df_lye_stes <- df_lye_stes %>% add_column("{psi_col}" := ste_by_period)
@@ -1014,9 +1014,9 @@ MA_design <- c(rep(1,1), rep(0,8), #1
 MA_converter <- sapply(1:20, function(k){MA_design[,k] / (sum(MA_design[,k]))})
 
 psi_MA_smoothed <- sapply(1:dim(MA_converter)[[2]],
-       function(k){
-         return(matrix_lyle_by_period[k,]%*%MA_converter[,k])
-       })
+                          function(k){
+                            return(matrix_lyle_by_period[k,]%*%MA_converter[,k])
+                          })
 
 df_lyle_2 %>% pivot_longer(cols = !period) %>% 
   ggplot(aes(x=period, y=value, group=name)) +
