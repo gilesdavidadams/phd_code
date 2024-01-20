@@ -45,6 +45,38 @@ fit_treatment_models <- function(df, prm){
   return(list(df=df, trt_models=trt_models))
 }
 
+fit_treatment_diagnostic <- function(df, prm){
+  
+  trt_models <- list()
+  # trt_models <- lapply(0:(length(prm$trt_mod_list)-1),
+  #                      function(k){
+                         
+  for(k in 0:(length(prm$trt_mod_list)-1)){
+    mdl_formula <- paste0("a_", k, " ~ ", 
+                          paste0(prm$trt_mod_list[[k+1]], collapse = " + "))
+    
+    #tryCatch({
+    df_k <- df %>% filter(.$ti > prm$t_a_vec[[k+1]])
+    model_temp <- with(df_k, 
+                       glm(  as.formula(mdl_formula),
+                             family=binomial))
+  }
+  # })
+  
+  
+  
+  for(k in 0:(length(trt_models)-1)){
+    df_k <- df %>% filter(.$ti > prm$t_a_vec[[k+1]])
+    model_temp <- trt_models[[k+1]]
+    df_k$fit_temp <- predict(model_temp, newdata = df_k, type="response")
+    df_k <- df_k %>% select(c(id, fit_temp))
+    df <- df %>% left_join(df_k, by="id")
+    names(df)[names(df) == "fit_temp"] <- paste0("fit_", k)
+  }
+  
+  return(list(df=df, trt_models=trt_models))
+}
+
 calculate_tau_k <- function(df, psi_hat_vec, prm,  a_k=0, ...){
   #by default calculates tau(0) aka T0 from trial start
   
