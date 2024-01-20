@@ -85,6 +85,7 @@ calculate_tau_k <- function(df, psi_hat_vec, prm,  a_k=0, ...){
                        prm$t_a_vec[[i+1]], 
                        prm$censor_max)
       df <- df %>% mutate(
+        C_psi = exp(-abs(g_psi)),
         C_psi = ifelse(g_psi < 0, 1, exp(-g_psi)),
         C_k = C_k + pmin(t_next - t_curr, C_rsd)*C_psi,
         C_rsd = C_rsd - pmin(t_next - t_curr, C_rsd)
@@ -94,10 +95,10 @@ calculate_tau_k <- function(df, psi_hat_vec, prm,  a_k=0, ...){
     
   }
   if (prm$censor) {
-    df <- df %>% mutate(tau_k_un = tau_k,
+    df <- df %>% mutate(#tau_k_un = tau_k,
                         delta_k = ifelse(tau_k < C_k, 0, 1),
                         tau_k = pmin(tau_k, C_k))
-    return(select(df, -c(ti_temp, ti_rsd, g_psi, C_rsd, C_k, C_psi, tau_k_un)))
+    return(select(df, -c(ti_temp, ti_rsd, g_psi, C_rsd, C_k, C_psi)))
   } else {
     return(select(df, -c(ti_temp, ti_rsd, g_psi)))
   }

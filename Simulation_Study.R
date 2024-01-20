@@ -87,20 +87,31 @@ create_sample <- function(prm){
 
 nr_run <- function(prm){
   
+  # source("G-estimation_FINAL.R")
+  
   cl <- makePSOCKcluster(28)
   registerDoParallel(cl)
   
   nr_out_list <- foreach(seed_curr=1:prm$sims, 
                          .packages=c("tidyverse", "DescTools"), #.combine='comb',
                           .errorhandling='remove',
-                    .export=c(
-                      "create_sample", "fit_treatment_models",
-                      "calculate_tau_k", "calculate_tau_rsd_m",
-                      "calculate_score", "calculate_jacobian",
-                      "calculate_C_k", "calculate_C_m",
-                      "newton_raphson_grad",
-                      "calculate_variance"
-                    )) %dopar%
+                    .export=ls(envir=globalenv())
+                      # c(
+                      # "create_sample",
+                      # "fit_treatment_models",
+                      # "calculate_score_piece",
+                      # "calculate_jacobi_piece",
+                      # "calculate_tau_k", "calculate_tau_rsd_m",
+                      # "calculate_C_k", "calculate_C_m",
+                      # "calculate_variance"
+                      # , "fit_treatment_models",
+                      # "calculate_tau_k", "calculate_tau_rsd_m",
+                      # "calculate_score", "calculate_jacobian",
+                      # "calculate_C_k", "calculate_C_m",
+                      # "newton_raphson_grad",
+                      # "calculate_variance"
+                    # )
+  ) %dopar%
     {
   
   # nr_out_list <- lapply(1:prm$sims, function(simnum){
@@ -123,7 +134,8 @@ nr_run <- function(prm){
     df <- fit_trt_out[[1]]
     prm$trt_models <- fit_trt_out[[2]]
     
-    nri_out <- df %>% newton_raphson_piece(prm=prm, print_results=F) 
+    nri_out <- df %>% newton_raphson_piece(prm=prm, print_results=F,
+                                           psi_max_vec=prm$psi_max_vec) 
     #psi_start_vec=rep(0, length(prm$psi_star_vec)))
     (psi_hat_vec <- nri_out[[1]])
     
@@ -131,24 +143,27 @@ nr_run <- function(prm){
     # trt_models = trt_models))
     #(var_hat_fast <- df %>% calculate_variance_fast(psi_hat_vec=psi_hat_vec, prm=prm))
     
-    if(max(diag(var_hat)) < 1) {
-      nr_out_single <- c(psi_hat_vec, diag(var_hat))
-    }
+    # if(max(diag(var_hat)) < 1) {
+    c(psi_hat_vec, diag(var_hat))
+    # }
     
     # if(simnum==prm$sims){
     #   close(progressbar)
     # }
     
     # })
+    
     }
   
    stopCluster(cl)
+   
+   return(nr_out_list)
   
-  nr_out <- nr_out_list %>% Reduce(rbind, .)
-  results_vec <- calculate_results(nr_out, prm)
+  # nr_out <- nr_out_list %>% Reduce(rbind, .)
+  # results_vec <- calculate_results(nr_out, prm)
   #results_df <- calculate_results_df(nr_out, prm)
   
-  return(list(nr_out=nr_out, results_vec=results_vec, results_df=results_df))
+  # return(list(nr_out=nr_out, results_vec=results_vec, results_df=results_df))
 }
 
 
@@ -387,7 +402,7 @@ prm <- list()
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
 #           (1) test block
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
-
+prm <- list()
 prm$sim_label <- "(const_1)"
 prm$t_a_vec <- c(0)
 prm$expmean <- 50
@@ -396,7 +411,7 @@ prm$beta_1_track <- c(1)
 prm$beta_x_track <- c(0)
 prm$psi_lab <- c("psi_1")
 prm$psi_x_star <- c()
-prm$sims <- 300
+prm$sims <- 1000
 prm$censor_date <- 80
 prm$censor_max <- prm$censor_date
 prm$trt_mod_list <- list(
@@ -405,33 +420,117 @@ prm$trt_mod_list <- list(
 
 prm$psi_1_star <- c(log(2))
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
-prm$censor <- F
-nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
 prm$censor <- T
 nr_out_list <- nr_run(prm=prm)
-# print_results_df(nr_out_list$results_df)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
+
+prm$psi_1_star <- c(log(1/2))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$censor <- T
+nr_out_list <- nr_run(prm=prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
+
+
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#           (1) -> (1) block                            #   ##
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+prm <- list()
+prm$sim_label <- "(const_1) -> (const_1)"
+prm$t_a_vec <- c(0, 35)
+prm$expmean <- 50
+prm$n_trgt <- 400
+prm$beta_1_track <- c(1, 1)
+prm$beta_x_track <- c(0, 0)
+prm$psi_lab <- c("psi_1")
+prm$psi_x_star <- c()
+prm$sims <- 3000
+prm$censor_date <- 80
+prm$censor_max <- prm$censor_date
+prm$trt_mod_list <- list(
+  c("1"),
+  c("1")
+)
+
+prm$psi_1_star <- c(log(2))
+prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+prm$censor <- F
+nr_out_list <- nr_run(prm=prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
+prm$censor <- T
+nr_out_list <- nr_run(prm=prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
+
 
 
 prm$psi_1_star <- c(log(1))
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
 prm$censor <- F
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
 prm$censor <- T
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
 
 
 prm$psi_1_star <- c(log(1/2))
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
 prm$censor <- F
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
 prm$censor <- T
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
+
+
+
+
+
+# prm$psi_1_star <- c(log(2))
+# prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+# prm$censor <- F
+# nr_out_list <- nr_run(prm=prm)
+# print_results(nr_out_list$results_vec, prm)
+# prm$censor <- T
+# nr_out_list <- nr_run(prm=prm)
+# # print_results_df(nr_out_list$results_df)
+# print_results(nr_out_list$results_vec, prm)
+# 
+# 
+# prm$psi_1_star <- c(log(1))
+# prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+# prm$censor <- F
+# nr_out_list <- nr_run(prm=prm)
+# print_results(nr_out_list$results_vec, prm)
+# prm$censor <- T
+# nr_out_list <- nr_run(prm=prm)
+# print_results(nr_out_list$results_vec, prm)
+# 
+# 
+# prm$psi_1_star <- c(log(1/2))
+# prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
+# prm$censor <- F
+# nr_out_list <- nr_run(prm=prm)
+# print_results(nr_out_list$results_vec, prm)
+# prm$censor <- T
+# nr_out_list <- nr_run(prm=prm)
+# print_results(nr_out_list$results_vec, prm)
 
 
 
@@ -599,23 +698,6 @@ print_results(nr_out_list$results_vec, prm)
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
 
 
-
-# 
-# prm$sim_label <- "(const_1) -> (const_2)"
-# prm$t_a_vec <- c(0, 5)
-# prm$expmean <- 50
-# prm$n_trgt <- 10000
-# prm$beta_1_track <- c(1, 2)
-# prm$beta_x_track <- c(0, 0)
-# prm$psi_lab <- c("psi_1", "psi_2")
-# prm$sims <- 1000
-# prm$censor_date <- 80
-# prm$trt_mod_list <- list(
-#   c("1"), 
-#   c("1", "a_0")
-# )
-
-
 prm$sim_label <- "(const_1) -> (const_2)"
 prm$t_a_vec <- c(0, 35)
 prm$expmean <- 50
@@ -623,54 +705,71 @@ prm$n_trgt <- 400
 prm$beta_1_track <- c(1, 2)
 prm$beta_x_track <- c(0, 0)
 prm$psi_lab <- c("psi_1", "psi_2")
-prm$sims <- 100
+prm$sims <- 3000
 prm$censor_date <- 80
+prm$censor_max <- prm$censor_date
 prm$trt_mod_list <- list(
-  c("1"), 
-  c("1", "a_0")
+  c("1"),
+  c("1")
 )
-
+prm$psi_max_vec <- c(2,2)
 
 
 prm$psi_1_star <- c(log(2), log(2))
-prm$psi_x_star <- c()
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
 prm$censor <- F
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
 prm$censor <- T
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
+
 
 prm$psi_1_star <- c(log(1/2), log(1/2))
-prm$psi_x_star <- c()
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
 prm$censor <- F
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
 prm$censor <- T
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
+
 
 prm$psi_1_star <- c(log(2), log(1/2))
-prm$psi_x_star <- c()
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
 prm$censor <- F
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
 prm$censor <- T
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
+
+
 
 prm$psi_1_star <- c(log(1/2), log(2))
-prm$psi_x_star <- c()
 prm$psi_star_vec <- c(prm$psi_1_star, prm$psi_x_star)
 prm$censor <- F
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
 prm$censor <- T
 nr_out_list <- nr_run(prm=prm)
-print_results(nr_out_list$results_vec, prm)
+nr_out_list %>% Reduce(rbind, .) %>%
+  calculate_results(prm=prm) %>%
+  print_results(prm=prm)
 
 
 

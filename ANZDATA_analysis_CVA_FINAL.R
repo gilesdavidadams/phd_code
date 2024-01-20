@@ -10,6 +10,7 @@ library(foreach)
 library(doParallel)
 library(tidyverse)
 library(gt)
+library(gtsummary)
 library(haven)
 library(survival)
 library(stats)
@@ -17,6 +18,8 @@ library(labelled)
 library(janitor)
 library(labelled)
 library(DescTools)
+library(cowplot)
+library(xtable)
 
 source("G-estimation_FINAL.R")
 
@@ -32,7 +35,7 @@ options(dplyr.summarise.inform = FALSE)
 
 
 #read in data
-df_all <- read_dta("C:/Users/gdadams/OneDrive - The University of Melbourne/ANZDATA Analysis/mergedJK_20131018_FINAL.dta")
+df_all <- read_dta("C:/Users/gdadams/OneDrive - The University of Melbourne/ANZREQ-194 Stata datasets/mergedJK_20131018_FINAL.dta")
 #df_all <- df_all %>% filter(usemarker == 1)
 df_filtered <- df_all %>%
                 filter(totaldialdur > 90,
@@ -40,68 +43,105 @@ df_filtered <- df_all %>%
                        bmi > 15,
                        bmi <= 50,
                        !is.na(sercreat),
-                       !is.na(rxhomeva),
-                       !is.na(rxhomeday90),
+                       #!is.na(rxhomeva),
+                       #!is.na(rxhomeday90),
                        !is.na(vacategory90)) %>%
-                      rename(t0 = "_t0", t="_t", 
-                            smoke=cig, 
-                            latereferral=referral3) %>%
-                      filter(!latereferral=="") %>%
-                      filter(smoke!=4)
+                      rename(t0 = "_t0", t="_t"#, 
+                            # smoke=cig, 
+                            # latereferral=referral3
+                      ) %>%
+  select(-c(race))
+  #%>% filter(!latereferral=="") #%>%
+                      #filter(smoke!=4) 
 
 
 #collect baseline variables
 df_baseline <- df_filtered %>%
-  mutate(cad=BEcoronary,
-         lung=BElung,
-         pvd=BEpvd,
+  rename(cad=coronB,
+         lung=luB,
+         pvd=pvB,
          diabetes=diabB,
          at_home=rxhome,
-         race=racereduced) %>%
+         race=racereduced,
+         latereferral=referral3,
+         smoke=cig) %>%
   group_by(id) %>%
-  select(id, firstdate, finaldate,
-         age, sex, race, 
+  filter(row_number()==1) %>%
+  ungroup() %>% 
+  mutate(sex=as.factor(sex),
+         race=factor(race, levels=c(1:4),
+                     labels = c("NZ maori/pacific",
+                                "Aus Indigenous",
+                                "Asian",
+                                "White/other")),
+         cad=factor(cad, levels=c(0,1), labels=c("No/Unknown", "Yes/Suspected")),
+         lung=factor(lung, levels=c(0,1), labels=c("No/Unknown", "Yes/Suspected")),
+         pvd=factor(pvd, levels=c(0,1), labels=c("No/Unknown", "Yes/Suspected")),
+         diabetes=factor(diabetes, levels=c(0,1, 2), labels=c("No/Unknown", "Type 1", "Type 2")),
+         firstyear = as.factor(format(firstdate,"%Y")),
+         smoke=ifelse(smoke %in% c(3,4), 0, smoke),
+         smoke=factor(smoke, levels=c(0,1,2), labels=c("Never/Unknown", "Current", "Former")),
+         latereferral=ifelse(latereferral %in% c("U", "", "N"), 0, 1),
+         latereferral=factor(latereferral, levels=c(0,1), labels=c("No/Unknown", "Yes")),
+         primary=ifelse((disease %>% as.integer) %in% c(800, 801, 802, 803), 1,
+                        ifelse((disease %>% as.integer) %in% c(100, 110:112, 121, 122,
+                                                               seq(130, 190, 10), 182,
+                                                               191), 2,
+                        ifelse((disease %>% as.integer) %in% c(300, 302), 3, 4))),
+         primary=factor(primary, levels=c(1,2,3,4), labels=c("Diabetes", "Glomerulonephritis",
+                                                             "Hypertension", "Other"))
+         ) %>%
+  select(id, age, sex, race, 
          sercreat, smoke,
          latereferral, cad, lung, pvd,
-         diabetes, bmi, at_home,
-         usemarker, censordate) %>%
-  filter(row_number()==1) %>%
-  ungroup()
+         diabetes, bmi, censordate, firstdate, firstyear, primary)
+
+df_baseline$bmi_cat <- cut(df_baseline$bmi, c(15, 20, 25, 30, 50))
 
 df_base_summarise <- df_filtered %>%
-  mutate(t_period=ifelse(t %% 90==0, t-1, t))
-df_base_summarise <- df_base_summarise %>%
+  mutate(t_period=ifelse(t %% 90==0, t-1, t)) %>%
   group_by(id) %>% 
   summarise(lastperiod=max((t_period %/% 90)-1),
             censorind=max(censorind))
+
 df_baseline <- df_baseline %>% 
   left_join(df_base_summarise, by="id")
 
-df_baseline$bmi_cat <- cut(df_baseline$bmi, c(0, 20, 25, 30, 100))
 
-df_hasPD <- df_filtered %>% 
-              mutate(isPD = ifelse(t0 > 90 & rxhomeva==6, 1, 0)) %>%
-              group_by(id) %>%
-              summarise(hasPD = max(isPD))
+
+df_modalityNA <- df_filtered %>% mutate(isNA = is.na(rxhomeva)) %>%
+                    group_by(id) %>%
+                    summarise(hasNA = max(isNA))
+
+df_filtered_NA <- df_filtered %>% 
+                    left_join(df_modalityNA, by="id") %>%
+                    filter(hasNA==0) %>%
+                    select(-c(hasNA))
+
+
+df_hasPD <- df_filtered_NA %>% 
+  mutate(isPD = ifelse(t > 90 & rxhomeva==6, 1, 0)) %>%
+  group_by(id) %>%
+  summarise(hasPD = max(isPD))
               
-df_filtered_PD <- df_filtered %>% 
+df_filtered_PD <- df_filtered_NA %>% 
                     left_join(df_hasPD, by="id") %>%
-                    filter(hasPD==0) %>%
-                    select(-c(hasPD))
+                    filter(hasPD==0) #%>%
+                    #select(-c(hasPD))
+
+df_hasHome <- df_filtered_PD %>% 
+  mutate(isPD = ifelse(t > 90 & rxhomeva==6, 1, 0)) %>%
+  group_by(id) %>%
+  summarise(hasPD = max(isPD))
               
 
 #choose variables/columns that we want to keep
 df_reduced <- df_filtered_PD %>% 
   select(c(id, sequno, firstdate, finaldate, deathdate, deadind,
-           survtime, rxhomeva, t, t0,
-           age, sex, racereduced, sercreat, smoke,
-           latereferral, rxhome, censordate, censorind,
-           lu, pv
+           survtime, rxhomeva, t, t0, censordate
   ))
   #select(-c(sequno, firstdate, finaldate, deathdate, survtime)) %>%
   
-
-
 
 #split the dataset at the period cut-off points
 df_split <- survSplit(Surv(t0, t, deadind)~., df_reduced, cut=seq(90,3650,90))
@@ -120,12 +160,6 @@ for(i in 0:max(df_split$rxhomeva, na.rm=TRUE)){
 rxhomeva_sum_cols <- c()
 
 for(i in 0:max(df_split$rxhomeva, na.rm=TRUE)){
-  if(i==0){
-    progressbar <- txtProgressBar(min=0, max=max(df_split$rxhomeva, na.rm=TRUE),
-                                  style=3, width=50, char="=")}
-  else{
-    setTxtProgressBar(progressbar, i) }
-  
   rxhomeva_sum_cols <- c(rxhomeva_sum_cols, paste0("rxhomeva_sum_", i))
   col_name <- as.name(paste0("rxhomeva_", i))
   df_split_grp <- df_split %>% group_by(id, period) %>%
@@ -135,8 +169,6 @@ for(i in 0:max(df_split$rxhomeva, na.rm=TRUE)){
     left_join(df_split_grp,
               by=c("id", "period")) %>%
     select(-c({{col_name}}))
-  
-  if(i==max(df_split$rxhomeva, na.rm=TRUE)){close(progressbar)}
 }
 
 
@@ -190,6 +222,12 @@ df_90_home <- df_90 %>%
   mutate(ai_home = ifelse(ai %in% c(0,1,2), 1, 0)) %>%
   group_by(id) %>%
   summarise(has_home = max(ai_home))
+# 
+# df_90_CVC <- df_90 %>%
+#   mutate(ai_CVC = ifelse(ai %in% c(2,5), 1, 0)) %>%
+#   group_by(id) %>%
+#   summarise(has_CVC = max(ai_CVC))
+
 
 # df_90_incPD <- df_90 %>%
 #   mutate(is.PD = (ai == 6)) %>%
@@ -205,50 +243,301 @@ df_90_home <- df_90 %>%
 
 df_90_filtered <- df_90 %>%
   left_join(df_90_NA, by="id") %>%
-  filter(has_NA != 1) %>%
+  filter(has_NA == 0) %>%
   left_join(df_90_home, by="id") %>%
-  filter(has_home != 1) %>%
+  filter(has_home == 0) %>%
+  # left_join(df_90_CVC, by="id") %>%
+  # filter(has_CVC == 0) %>%
   rename(ai_finest=ai) %>%
   filter(ti > 90)
 
 
-
-# df_90_PD <- df_90 
-# 
-# df_90_hasPD <- df_90 %>% group_by(id) %>%
-#   summarise(has.PD = max(as.numeric(is.PD)))
-# 
-# df_90 <- df_90 %>%
-#   left_join(df_90_hasPD, by="id") %>%
-#   filter(ti>90)
-
-#df_90_wide <- df_90 %>% select(-c(ai_NA, has_NA, is.PD, has.PD)) %>%
-#              pivot_wider(names_from = period,
-#                    names_prefix = "a_",
-#                    values_from = ai_finest)
-
-# df_90_home <- df_90 %>% mutate(HvF = ifelse(ai_finest %in% c(0,1,2), 1, 0)) %>%
-#   select(c(id, period, HvF)) %>%
-#   pivot_wider(names_from = period,
-#               names_prefix = "HvF_",
-#               values_from = HvF)
-
-# df_CVC_vs_AVFG_long <- df_90 %>%
-#                         filter(has.PD != 1) %>%
-#                         mutate(ai = ifelse(ai_finest %in% c(2, 5), 1, 0))
-
-
-
 df_CVC_vs_AVFG_long <- df_90_filtered %>%
-  # filter(has.PD != 1) %>%
-  #mutate(ai = ifelse(ai_finest %in% c(2, 5), 1, 0))
-  mutate(ai = ifelse(ai_finest %in% c(2, 5), 0, 1))
+  #filter(has.PD != 1) %>%
+  mutate(ai = ifelse(ai_finest %in% c(2, 5), 1L, 0L))
+  # mutate(ai = ifelse(ai_finest %in% c(2, 5), 0, 1))
+  
+  # this is AVFG home vs facility
+  # mutate(ai = ifelse(ai_finest %in% c(0,1,2), 1, 0))
 
-df_CVC_vs_AVFG_wide <- df_CVC_vs_AVFG_long %>% 
+df_cva <- df_CVC_vs_AVFG_long %>% 
   select(c(id, period, ti, dies, ai)) %>%
   pivot_wider(names_from = period,
               names_prefix = "a_",
-              values_from = ai)
+              values_from = ai) %>%
+  left_join(df_baseline, by="id") %>%
+  mutate(x=0)
+
+
+prm_base <- list()
+prm_base$sim_label <- "(const_1)"
+prm_base$psi_lab <- c("psi_1")
+prm_base$censor_date <- df_all$finaldate %>% max()
+prm_base$censor <- T
+
+
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+#          EXPLORATORY DATA ANALYSIS
+#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+
+#Count of time spent on AVF/AVG/CVC H or F
+
+df_reduced %>%
+  select(id, rxhomeva, t, t0) %>%
+  filter(t > 90) %>%
+  mutate(totaltime = t-t0) %>%
+  group_by(rxhomeva) %>%
+  summarise(time_count=sum(totaltime)) #%>%
+  # select(time_count) %>% sum
+
+#Count of time spent on AVF/AVG/CVC facility only after filtering
+df_split %>%
+    filter(id %in% df_90_filtered$id) %>% 
+    select(id, rxhomeva, t, t0) %>%
+    filter(t > 90) %>%
+    mutate(totaltime = t-t0) %>%
+    group_by(rxhomeva) %>%
+    summarise(time_count=sum(totaltime))
+
+
+
+# df_reduced  %>% 
+  left_join(df_reduced %>% 
+              mutate(homeorpd = ifelse(rxhomeva %in% c(0,1,2,6),1,0)) %>% 
+              group_by(id) %>% 
+              summarise(has_homepd = max(homeorpd)),
+            by="id") %>% 
+  filter(has_homepd==0) %>% 
+  select(id, rxhomeva, t, t0) %>% 
+  mutate(avfg = ifelse(rxhomeva %in% c(3,4), 1, 0), totaltime = t-t0) %>% 
+  group_by(avfg) %>% 
+  summarise(sum(totaltime))
+
+
+
+
+
+
+
+
+
+df_count <- df_cva
+period_stats <- lapply(-1:32, function(k){
+  a_k <- as.name(paste0("a_", k))
+  df_now <- df_cva %>% 
+              filter(ti >= 90*(k+1))
+  n_now <- df_now %>% nrow()
+  a_1_now <- df_now %>% select({a_k}) %>% sum(na.rm=T)
+  a_0_now <- n_now - a_1_now
+  
+  if(k==-1){
+    switchTo0 <- NA
+    switchTo1 <- NA
+    switch_tot <- NA
+    dies_tot <- NA
+  } else {
+    a_prev <- as.name(paste0("a_", k-1))
+    df_now <- df_now %>% mutate(switchTo1 = ifelse({{a_prev}}==0 & {{a_k}}==1, 1, 0),
+                                switchTo0 = ifelse({{a_prev}}==1 & {{a_k}}==0, 1, 0),
+                                dies_now = ifelse((ti < 90*(k+2)) & dies==1, 1, 0))
+    switchTo0 <- df_now %>% select(switchTo0) %>% sum(na.rm=T) %>% as.integer()
+    switchTo1 <- df_now %>% select(switchTo1) %>% sum(na.rm=T) %>% as.integer()
+    switch_tot <- switchTo0 + switchTo1 %>% as.integer()
+    dies_tot <- df_now %>% select(dies_now) %>% sum(na.rm=T) %>% as.integer()
+  }
+  return(tibble(k=k, n=n_now, a_0=a_0_now, a_1=a_1_now, deaths=dies_tot, 
+                switch_tot=switch_tot, switchTo0=switchTo0, switchTo1=switchTo1))
+}) %>% Reduce(rbind, .) %>% 
+        mutate(d = format(round(deaths/n*100, 1)), s = format(round(switch_tot/n*100, 1)))
+period_stats %>% xtable(digts=0) %>% print(include.rownames=F, 
+                         format.args = list(big.mark = ","))
+
+period_stats %>% select(k, deaths) %>% filter(k >= 0) %>%
+  ggplot(aes(x=k, y=deaths)) +
+  geom_point() + geom_smooth(method="lm", formula = (y ~ log(x+1)), se=F) +
+  xlab("Period") + ylab("Deaths per period")
+
+
+
+# Analysis of the covariates
+#AGE
+# value_count <- function(variable, value){
+#   # part_count <- df_cva %>% filter({{variable}}==value) %>% nrow()
+#   # total_count <- df_cva %>% nrow()
+#   # return((part_count/total_count*100) %>% round(.,1))
+#   return((df_cva %>% select({{variable}}) %>% filter({{variable}}=="M")))
+# }
+
+# df_cva %>% summarise(value=mean(age), spread=sd(age)) %>%
+#   cbind(df_cva %>% filter(a_0 == 0) %>%
+#           summarise(v0=mean(age), spread0=sd(age))) %>%
+#   cbind(df_cva %>% filter(a_1 == 0) %>%
+#           summarise(v1=mean(age), spread1=sd(age))) %>%
+#   add_column(cvt="Age", .before=T) %>%
+# #SEX
+# # rbind(
+#   
+#   tibble(value=value_count(as.name("sex"), value="M"))
+#            
+#            
+#            
+#            df_cva %>% filter(sex=="M") %>% nrow()) %>%
+#     cbind(spread=(function(df){(df_cva %>% filter(sex=="M") %>% nrow())/(df_cva %>% nrow())*100) %>%
+#             round(.,1) %>% format()) %>%
+#     
+#     #      , spread=sd(age)) %>%
+#     # cbind(df_cva %>% filter(a_0 == 0) %>%
+#     #         summarise(v0=mean(age), spread0=sd(age))) %>%
+#     # cbind(df_cva %>% filter(a_1 == 0) %>%
+#     #         summarise(v1=mean(age), spread1=sd(age))) %>%
+#     # add_column(cvt="Age", .before=T)
+#   )
+# ages_0 <- df_cva %>% filter(a_0 == 0) %>% summarise(v1=mean(age))
+# df_cva %>% group_by(a_0) %>% summarise(v1=mean(age))
+
+
+
+# tibble(value=df_cva %>% filter(sex=="M") %>% nrow()) %>%
+#   cbind(
+    # tibble(spread=(function(df){x <- df %>% nrow(); x+1})(df_cva))
+    # 
+    # spread=((df_cva %>% filter(sex=="M") %>% nrow())/(df_cva %>% nrow())*100) %>%
+    #       round(.,1) %>% format())
+
+
+
+# df_baseline %>% select(race) %>% table %>% prop.table
+
+
+
+
+tk_max <- 25
+pk_max <- 16
+prm_ai <- prm_base
+prm_ai$t_a_vec <- c(seq(90, 90*(tk_max+1), 90))
+prm_ai$beta_1_track <- c(1:pk_max, rep(pk_max+1, (tk_max+1)-pk_max))
+prm_ai$beta_x_track <- rep(0, tk_max+1)
+
+final_time <- prm_ai$t_a_vec[length(prm_ai$t_a_vec)] + 90
+
+df_cva_ai <- df_cva %>% #filter(firstdate < prm_26$censor_date) %>%
+  filter(!(censordate < prm_ai$censor_date) | (is.na(censordate))) %>%
+  mutate(C_i = as.integer(difftime(prm_ai$censor_date, firstdate,  "days"))) %>%
+  mutate(C_i = pmin(C_i, final_time )) %>%
+  mutate(ti = pmin(ti, C_i),
+         iscensored = ifelse(ti==C_i, 1, 0))
+
+prm_ai$censor_max <- df_cva_ai %>% select(C_i) %>% max()
+
+prm_ai$trt_mod_list_full <- lapply(0:tk_max, function(k) {
+    mdl_k <- c("1", "age", "sex", "race", "smoke", #"firstyear",
+             "sercreat", "latereferral", "cad", "lung", "pvd", 
+             "diabetes",  "primary", "bmi_cat"
+    )
+  return(mdl_k)
+})
+
+#fit_trt_out <- df_cva_ai %>% fit_treatment_diagnostic(prm=prm_ai)
+fit_trt_out <- df_cva_ai %>% fit_treatment_models(prm=prm_ai)
+df_cva_ai_trt <- fit_trt_out[[1]]
+prm_ai$trt_models <- fit_trt_out[[2]]
+
+#for(j in 1:length(prm_ai$trt_models)){
+# z_df <-   
+tibs_full <- lapply(1:(tk_max+1),
+      function(j){
+          mod_values <- prm_ai$trt_models[[j]] %>% 
+                              summary %>%
+                              .$coefficients
+          
+          cov_df <- tibble(Covariate=mod_values %>% rownames,
+                           Estimate=mod_values[,1],
+                           'Std. Error'=mod_values[,2]
+          )
+          # %>%
+          #                     as_tibble(rownames="Covariate") %>%
+          #                     select(Covariate, Estimate, 'Std. Error')
+          for(i in 1:(dim(cov_df)[[1]])){
+            if(i==1){
+              tibs <- cov_df[i,] %>% 
+                      select(Covariate, Estimate) %>%
+                      add_row(Covariate=cov_df[i,]$Covariate,
+                              Estimate=cov_df[i,]$'Std. Error')
+            } else {
+              tibs <- tibs %>%
+                      add_row(Covariate=cov_df[i,]$Covariate,
+                              Estimate=cov_df[i,]$Estimate) %>%
+                      add_row(Covariate=cov_df[i,]$Covariate,
+                              Estimate=cov_df[i,]$'Std. Error')      
+            }
+          }
+          tibs <- tibs %>% mutate(
+                          est_str=Estimate %>% 
+                                  #format(scientific=F) %>%
+                                  round(digits=4) %>%
+                                  format(scientific=F),
+                          est_str=ifelse(row_number() %% 2 == 1,
+                                         est_str,
+                                         paste0("(", gsub(" ", "", est_str), ")")),
+                          Covariate=ifelse(row_number() %% 2 ==1,
+                                          Covariate,
+                                          "")
+                                  )
+          
+          if(j > 1) {
+            tibs <- tibs %>% select(-c(Covariate))
+          }
+          new_name <- as.name(paste0("p_", j-1))
+          tibs <- tibs %>% rename("{new_name}" := est_str)
+          tibs <- tibs %>% select(-c(Estimate))
+          return(tibs)
+      }) %>% Reduce(cbind, .)
+
+tibs_full %>% xtable() %>% print(include.rownames=F)
+      # mutate(Covariate=ifelse(row_number() %% 2 == 1,
+      #                         Covariate,
+      #                         "")) # %>% xtable()
+
+
+
+covariates_table <- lapply(1:(length(prm_ai$trt_models)-1),
+      function(j){
+        new_name <- as.name(paste0("p_", j))
+        zvalues <- prm_ai$trt_models[[j]] %>% 
+                    summary %>%
+                    .$coefficients %>%
+                    as_tibble(rownames="Covariate") %>%
+                    select(Covariate, Estimate, 'Std. Error') %>%
+                    rename("{new_name}" := 'z value')
+        zvalues <- zvalues %>% mutate(
+                    "{new_name}" := format(round({{new_name}}, digits=1))
+        )
+      if(j==1){
+        return(zvalues)
+      } else {
+        return(zvalues %>% select(-c(Covariate)))
+      }
+       #  if(j==1){p_df <- zvalues
+       #  } else {
+       #    zvalues <- zvalues %>% select(-c(Covariate))
+       #    z_df <- p_df %>% cbind(zvalues)}
+       # # }
+}) %>% Reduce(cbind, .) 
+
+covariates_table %>% xtable %>% print(include.rownames=F, 
+                         format.args = list(big.mark = ","))
+
+# sapply(1:length(z_df), function(j){
+#   z_df[[j]] %>% dim %>% .[[1]]
+# })
+# %>% Reduce(cbind, .)
+
+
+
+
+
+
+
 
 
 
@@ -256,45 +545,17 @@ df_CVC_vs_AVFG_wide <- df_CVC_vs_AVFG_long %>%
 #           C vs A
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
 
-df_cva <- df_CVC_vs_AVFG_wide
-df_cva <- df_cva %>% left_join(df_baseline, by="id")
-df_cva <- df_cva %>% mutate(sex=as.factor(sex),
-                            race=factor(race, labels = c("NZ maori/pacific" = 1,
-                                                         "Aus Indigenous" = 2,
-                                                         "Asian" = 3,
-                                                         "White/other" = 4)),
-                            firstyear = as.factor(format(firstdate,"%Y")),
-                            smoke = as.factor(smoke),
-                            x=0
-)
-# df_cva <- df_cva %>% filter(!is.na(sercreat)) %>% 
-#   filter(!latereferral=="") %>%
-#   filter(smoke!=4) %>%
-#   filter(!is.na(bmi_cat)) %>%
-#   filter(usemarker==1)
-
-
-
-
-prm_27 <- list()
-prm_27$sim_label <- "(const_1)"
-# prm_27$t_a_vec <- c(seq(90, 90*28, 90))
-prm_27$psi_lab <- c("psi_1")
-prm_27$censor_date <- df_all$finaldate %>% max()
-prm_27$censor <- T
-
-
-prm_27_full <- prm_27
+prm_27_full <- prm_base
 prm_27_full$t_a_vec <- c(seq(90, 90*27, 90))
 prm_27_full$beta_1_track <- c(1:16, rep(17, 27-16))
 prm_27_full$beta_x_track <- rep(0, 27)
 
-final_time <- prm_27_full$t_a_vec[length(prm_27_full$t_a_vec)]
+final_time <- prm_27_full$t_a_vec[length(prm_27_full$t_a_vec)] + 90
 
 df_cva_27 <- df_cva %>% #filter(firstdate < prm_27$censor_date) %>%
-  filter(!(censordate < prm_27$censor_date) | (is.na(censordate))) %>%
-  mutate(C_i = as.integer(difftime(prm_27$censor_date, firstdate,  "days"))) %>%
-  mutate(C_i = pmax(C_i, final_time )) %>%
+  filter(!(censordate < prm_27_full$censor_date) | (is.na(censordate))) %>%
+  mutate(C_i = as.integer(difftime(prm_27_full$censor_date, firstdate,  "days"))) %>%
+  mutate(C_i = pmin(C_i, final_time )) %>%
   mutate(ti = pmin(ti, C_i),
          iscensored = ifelse(ti==C_i, 1, 0))
 
@@ -304,16 +565,16 @@ prm_27_full$censor_max <- df_cva_27 %>% select(C_i) %>% max()
 
 
 #Full treatment model
-
+# 
 prm_27_full$trt_mod_list_full <- lapply(0:26, function(k) {
-  mdl_k <- c("1", "age", "sex", "race", "smoke", "firstyear",
+  mdl_k <- c("1", "age", "sex", "race", "smoke", #"firstyear",
              "sercreat", "latereferral", "cad", "lung", "pvd",
-             "diabetes", "bmi_cat"#, "at_home"
+             "diabetes", "bmi_cat", "primary"
   )
   return(mdl_k)
 })
-#df_cva_27_full <- df_cva_27 %>% filter(firstdate < prm_27_full$censor_date) %>%
-#          mutate(C_i = difftime(prm_27_full$censor_date, firstdate,  "days"))
+
+
 fit_trt_out <- df_cva_27 %>% fit_treatment_models(prm=prm_27_full)
 df_cva_27_full <- fit_trt_out[[1]]
 prm_27_full$trt_models <- fit_trt_out[[2]]
@@ -336,6 +597,7 @@ ste <- sapply(1:dim(VCV)[[1]],
 var_vec <- ste^2
 
 tibble(psi=psi_hat_vec, ste=ste, VCV=ste^2)
+tibble_cva <- tibble(psi=psi_hat_vec, ste=ste, VCV=ste^2)
 
 df_psi_27 <- lapply(1:(prm_27_full$beta_1_track %>% length()),
                     function(k){
@@ -343,70 +605,62 @@ df_psi_27 <- lapply(1:(prm_27_full$beta_1_track %>% length()),
                       psi_now <- psi_hat_vec_27[beta_value]
                       ste_now <- ste[beta_value]
                       
-                      tibble(period=k-1, psi=psi_now, ste=ste_now)
+                      tibble(period=((k-1) %>% as.integer()), psi=psi_now, ste=ste_now, epsi=exp(psi))
                     }) %>% Reduce(rbind, .)
-df_psi_27 %>% ggplot(aes(x=period, y=psi)) + 
-  geom_point() +
-  geom_errorbar(aes(ymin=psi-2*ste, ymax=psi+2*ste),
-                width=.2, position=position_dodge(0.05))
+
+# df_psi_27 %>% mutate(psi = psi, epsi=exp(psi)) #%>%  xtable(digts=0) %>% print(include.rownames=F, 
+                         # format.args = list(big.mark = ","))
 
 # INVERSE VARIANCE WEIGHTED AVERAGING
 
-ivw_psi_hat <- sapply(1:26,
+ivw_3 <- lapply(1:27,
                       function(j){
                         if(j==1){
                           weights <- var_vec[1:2]
                           psi_hat_part <- psi_hat_vec[1:2]
                         } else if (j==16){
-                          weights <- var_vec[15:16]
-                          psi_hat_part <- psi_hat_vec[15:16]
-                        } else if (j >= 17) {
-                          psi_hat_part <- psi_hat_vec[16]
-                          weights <- 1
+                          weights <- var_vec[15:17]
+                          psi_hat_part <- psi_hat_vec[15:17]
+                        } else if (j == 17) {
+                          psi_hat_part <- psi_hat_vec[c(16, 17, 17)]
+                          weights <- var_vec[c(16, 17, 17)]
+                        } else if (j >= 18) {
+                          psi_hat_part <- psi_hat_vec[17]
+                          weights <- var_vec[17]
                         } else {
                           weights <- var_vec[(j-1):(j+1)]
                           psi_hat_part <- psi_hat_vec[(j-1):(j+1)]
                         }
-                        return(sum(psi_hat_part/weights)/(sum(1/weights)))
-                      })
+                        return(list(psi_avg=sum(psi_hat_part/weights)/(sum(1/weights)),
+                                    var_avg=mean(weights)))
+                      }) #%>% Reduce(rbind, .)
 
-df_ivw <- lapply(1:(prm_27_full$beta_1_track %>% length()),
+df_ivw_3 <- lapply(1:(prm_27_full$beta_1_track %>% length()),
                  function(k){
-                   psi_now <- ivw_psi_hat[prm_27_full$beta_1_track[k]]
-                   
-                   tibble(period=k-1, psi=psi_now)
+                   psi_now <- ivw_3[[k]]$psi_avg
+                   ste_now <- ivw_3[[k]]$var_avg %>% sqrt()
+                   tibble(period=k-1, psi_ivw3=psi_now, ste_ivw3=ste_now)
                  }) %>% Reduce(rbind, .)
 
-df_ivw %>% ggplot(aes(x=period, y=psi)) + geom_point()
 
 
 
-
-
-
-
-df_ivw_5 <- lapply(1:26,
+ivw_5 <- lapply(1:27,
                    function(j){
                      if(j==1){
                        items <- 1:3
-                       # weights <- var_vec[1:3]
-                       # psi_hat_part <- psi_hat_vec[1:3]
                      } else if(j==2) {
                        items <- 1:4
-                       # weights <- var_vec[1:4]
-                       # psi_hat_part <- psi_hat_vec[1:4]
                      } else if (j==15){
                        items <- 13:16
-                       # weights <- var_vec[13:16]
-                       # psi_hat_part <- psi_hat_vec[13:16]
                      } else if (j==16){
-                       items <- 14:16
-                       # weights <- var_vec[14:16]
-                       # psi_hat_part <- psi_hat_vec[14:16]
-                     } else if (j >= 17) {
-                       items <- 17
-                       # psi_hat_part <- psi_hat_vec[16]
-                       # weights <- 1
+                       items <- c(14:17, 17)
+                     } else if (j == 17) {
+                       items <- c(15, 16, 17, 17, 17)
+                     } else if (j==18){
+                       items <- c(16, 17, 17, 17, 17)
+                     } else if (j>=19){
+                       items <- c(17)
                      } else {
                        items <- (j-2):(j+2)
                        # weights <- var_vec[(j-2):(j+2)]
@@ -417,299 +671,77 @@ df_ivw_5 <- lapply(1:26,
                      #var_parts <- var_vec[items]
                      
                      psi_avg <- sum(psi_hat_part/weights)/(sum(1/weights))
-                     var_avg <- sum(outer(1/sqrt(weights), 1/sqrt(weights)))/((sum(1/weights))^2)
+                     var_avg <- mean(weights)
+                     # var_avg <- sum(outer(1/sqrt(weights), 1/sqrt(weights)))/((sum(1/weights))^2)
                      # (sum(1/weights))^(-1)*(sum(outer(1/sqrt(weights, 1/weights)))
-                     return(tibble(period=j, psi=-psi_avg, var=var_avg, ste=sqrt(var_avg)))
-                   }) %>% Reduce(rbind, .)
+                     return(tibble(period=j, psi_avg=psi_avg, var_avg=var_avg, ste=sqrt(var_avg)))
+                   })# %>% Reduce(rbind, .)
 
-# df_ivw_5 <- lapply(1:(prm_27_full$beta_1_track %>% length()),
-#                  function(k){
-#                    psi_now <- ivw_psi_hat_5[prm_27_full$beta_1_track[k]]
-#                    
-#                    tibble(period=k-1, psi=-psi_now)
-#                  }) %>% Reduce(rbind, .)
+df_ivw_5 <- lapply(1:(prm_27_full$beta_1_track %>% length()),
+                 function(k){
+                   psi_now <- ivw_5[[k]]$psi_avg
+                   var_now <- ivw_5[[k]]$var_avg
+                   ste_now <- var_now %>% sqrt()
+                   tibble(period=k-1, psi_ivw5=psi_now, ste_ivw5=ste_now)
+                 }) %>% Reduce(rbind, .)
 
-df_ivw_5 %>% ggplot(aes(x=period, y=psi)) + 
-  geom_point() + 
+
+
+
+
+df_psi_all <- df_psi_27 %>% left_join(df_ivw_3, by="period") %>% left_join(df_ivw_5, by="period") %>%
+  mutate(period=as.integer(period))
+
+df_psi_all %>%
+  xtable(digts=0) %>% print(include.rownames=F, 
+                         format.args = list(big.mark = ","))
+
+
+
+#  ylab("psi")df_psi_27 %>% mutate(psi = psi, epsi=exp(psi)) #%>%  
+
+
+
+
+
+
+
+
+# plt_exppsi <- df_psi_27 %>% ggplot(aes(x=period)) + 
+#   geom_point(aes(y=exp(psi))) +
+#   ylim(-2.5, 1) + ylab("psi") + theme_bw() + geom_hline(yintercept=0, linetype="dashed", color="blue")
+
+#plot_grid(plt_psi, plt_exppsi, labels = "AUTO", nrow=2)
+
+df_psi_all %>% ggplot(aes(x=period)) + 
+  geom_point(aes(y=psi)) +
   geom_errorbar(aes(ymin=psi-2*ste, ymax=psi+2*ste),
-                width=.2, position=position_dodge(0.05))
+                width=.1) + #, position=position_dodge(0.05)) +
+  ylim(-2.5, 1) + ylab("psi") + theme_bw() + geom_hline(yintercept=0, linetype="dashed", color="blue")
+
+df_psi_all %>% ggplot(aes(x=period, y=psi_ivw3)) + geom_point() +
+        geom_errorbar(aes(ymin=psi_ivw3-2*ste_ivw3, ymax=psi_ivw3+2*ste_ivw3),
+                      width=.2, position=position_dodge(0.05)) +
+        ylim(-2.5, 1) + theme_bw() + geom_hline(yintercept=0, linetype="dashed", color="blue") +
+         ylab("IVW3")
+
+
+df_psi_all %>% ggplot(aes(x=period, y=psi_ivw5)) + geom_point() +
+  geom_errorbar(aes(ymin=psi_ivw5-2*ste_ivw5, ymax=psi_ivw5+2*ste_ivw5),
+                width=.2, position=position_dodge(0.05)) +
+  ylim(-2.5, 1) + theme_bw() + geom_hline(yintercept=0, linetype="dashed", color="blue") +
+   ylab("IVW5")
 
 
 
 
 
 
-n=15
-df_two_stage_list <- tibble()
-for(n in 1:15){
-  #for(n in 15:20){
-  prm_temp <- prm_20_full
-  prm_temp$beta_1_track <- c(rep(1, n), rep(2, 20-n))
-  
-  nr_out_20 <- df_cva_20_full %>%
-    newton_raphson_piece(prm=prm_20_full,
-                         psi_max = 4,
-                         max_iter=200)
-  
-  psi_hat_vec <- nr_out[[1]]
-  
-  VCV <- df_cva_20_full %>% calculate_variance(prm=prm_20_full,
-                                               psi_hat_vec=psi_hat_vec)
-  #trt_models=trt_models_25_full)
-  
-  ste <- sapply(1:dim(VCV)[[1]],
-                function(k){
-                  return(sqrt(VCV[k,k]))
-                })
-  
-  df_two_stage_list <- list(df_two_stage_list,
-                            tibble(psi_1 = psi_hat_vec[1],
-                                   psi_2 = psi_hat_vec[2],
-                                   ste_1 = ste[1],
-                                   ste_2 = ste[2]))
-  
-}
 
 
 
 
 
-
-fit_trt_out <- df_CvA_aug %>% fit_treatment_models(prm=prm)
-df <- fit_trt_out[[1]]
-trt_models <- fit_trt_out[[2]]
-
-
-psi_extender_list <- list()
-
-lapply(0:15, function(i){
-  if(i > 0){
-    prm_25_full$beta_1_track <- c(1:i, rep(i+1, 26-i))
-  } else {
-    prm_25_full$beta_1_track <- rep(1,26)
-  }
-  
-  nr_out <- df_cva_25_full %>% newton_raphson_piece(prm=prm_25_full)
-  psi_hat_vec <- nr_out[[1]]
-  
-  tibble(psi_hat_vec)
-}) %>% Reduce(rbind, .)
-
-
-
-
-psi_indiv_list <- list()
-ste_indiv_list <- list()
-for(i in 0:8){
-  #for(i in 7:10){
-  #psi_indiv_list <- lapply(1:10,
-  #function(i){
-  if(i > 0){
-    prm_25_full$beta_1_track <- c(1:i, rep(i+1, 26-i))
-  } else {
-    prm_25_full$beta_1_track <- rep(1,26)
-  }
-  
-  # if(i == 0){
-  #   psi_start_vec <- c(0)
-  # } else if(i == 1){
-  #   psi_start_vec <- psi_indiv_list[[i]]
-  #   psi_start_vec <- c(psi_start_vec, psi_start_vec)
-  # } else {
-  #   psi_start_vec <- psi_indiv_list[[i]]
-  #   psi_start_vec <- c(psi_start_vec[1:(i-1)],
-  #                    psi_start_vec[i],
-  #                    psi_start_vec[i:length(psi_start_vec)])
-  # }
-  
-  nr_out <- df_cva_25_full %>% newton_raphson_piece(prm=prm_25_full, #tol=0.01,
-                                                    #psi_start_vec=psi_start_vec,
-                                                    psi_max_vec = c(rep(4,7), rep(3,4)),
-                                                    max_iter=200)
-  psi_hat_vec <- nr_out[[1]]
-  # return(tibble(psi_hat=psi_hat_vec))
-  #})
-  psi_indiv_list <- psi_indiv_list %>% append(., list(psi_hat_vec))
-  
-  # VCV <- df_cva_25_full %>% calculate_variance(prm=prm_25_full,
-  #                                      psi_hat_vec=psi_hat_vec)
-  #                                      #trt_models=trt_models_25_full)
-  
-  # ste <- sapply(1:ifelse(i==0, 1, dim(VCV)[[1]]),
-  #               function(k){
-  #                 return(ifelse(i==0, sqrt(VCV), sqrt(VCV[k,k])))
-  #               })
-  # ste_indiv_list <- ste_indiv_list %>% append(., list(ste))
-}
-
-
-
-df_indiv <- tibble(period=0:25)
-ste_indiv <- tibble(period=0:25)
-for(i in 1:length(psi_indiv_list)){
-  psi_hat <- psi_indiv_list[[i]]
-  ste_hat <- ste_indiv_list[[i]]
-  
-  psi_by_period <- sapply(1:26, 
-                          function(k){
-                            if(k < length(psi_hat)){
-                              return(-psi_hat[k])
-                            } else {
-                              return(-psi_hat[length(psi_hat)])
-                            }
-                          })
-  
-  ste_by_period <- sapply(1:26, 
-                          function(k){
-                            if(k < length(ste_hat)){
-                              return(ste_hat[k])
-                            } else {
-                              return(ste_hat[length(ste_hat)])
-                            }
-                          })
-  
-  psi_col <- as.name(paste0("itr_", i-1))
-  #ste_col <- as.name(paste0("itr_", i, "_ste"))
-  df_indiv <- df_indiv %>% add_column("{psi_col}" := psi_by_period)
-  ste_indiv <- ste_indiv %>% add_column("{psi_col}" := ste_by_period)
-  #nr_out_MA_list <- nr_out_MA_list %>% append(., list(psi_hat_old))
-}
-
-
-df_two_stage_list <- tibble()
-for(n in 1:15){
-  #for(n in 15:20){
-  prm_temp <- prm_25_full
-  prm_temp$beta_1_track <- c(rep(1, n), rep(2, 25-n))
-  
-  nr_out <- df_cva_25_full %>%
-    newton_raphson_piece(prm=prm_temp,
-                         psi_max = 4,
-                         max_iter=200)
-  
-  psi_hat_vec <- nr_out[[1]]
-  
-  VCV <- df_cva_25_full %>% calculate_variance(prm=prm_temp,
-                                               psi_hat_vec=psi_hat_vec)
-  #trt_models=trt_models_25_full)
-  
-  ste <- sapply(1:dim(VCV)[[1]],
-                function(k){
-                  return(sqrt(VCV[k,k]))
-                })
-  
-  df_two_stage_list <- list(df_two_stage_list,
-                            tibble(psi_1 = psi_hat_vec[1],
-                                   psi_2 = psi_hat_vec[2],
-                                   ste_1 = ste[1],
-                                   ste_2 = ste[2]))
-  
-}
-
-
-
-
-ste_indiv_list <- list()
-for(i in 0:8){
-  #for(i in 7:10){
-  #psi_indiv_list <- lapply(1:10,
-  #function(i){
-  if(i > 0){
-    prm_25_full$beta_1_track <- c(1:i, rep(i+1, 26-i))
-  } else {
-    prm_25_full$beta_1_track <- rep(1,26)
-  }
-  
-  nr_out <- df_cva_25_full %>% newton_raphson_piece(prm=prm_25_full, #tol=0.01,
-                                                    #psi_start_vec=psi_start_vec,
-                                                    psi_max_vec = c(rep(4,7), rep(3,4)),
-                                                    max_iter=200)
-  psi_hat_vec <- nr_out[[1]]
-  # return(tibble(psi_hat=psi_hat_vec))
-  #})
-  psi_indiv_list <- psi_indiv_list %>% append(., list(psi_hat_vec))
-  
-}
-
-
-
-
-
-#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
-#           Building models with a "moving" average of 4 periods
-#           First 4-4-x then 1-4-3-x, 2-4-2-x etc
-#   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
-
-prm$beta_1_track <- rep(1,26)
-nr_out_MA_list <- list()
-df_MA <- tibble(period=0:8)
-for(i in 0:4){
-  if(i==0){
-    prm$beta_1_track <- c(rep(1,4), rep(2,4), rep(3, 18))
-  } else if(i < 4){
-    prm$beta_1_track <- c(rep(1,i), rep(2, 4), rep(3, 4-i), rep(4, 18))
-  } else {
-    prm$beta_1_track <- c(rep(1,4), rep(2,4), rep(3, 18))
-  }
-  
-  if(i == 0){
-    psi_start <- rep(0, 3)
-  } else if(i == 1){
-    psi_start <- c(psi_hat_old[[1]], psi_hat_old[[2]], psi_hat_old[[2]],
-                   psi_hat_old[[3]])
-  } else if (i %in% c(2,3)) {
-    psi_start <- psi_hat_old
-  } else{
-    psi_start <- c(psi_hat_old[[1]], psi_hat_old[[2]], psi_hat_old[[4]])
-  }
-  
-  nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
-                                       psi_start_vec=psi_start,
-                                       print_results=T)
-  psi_hat_old <- nr_out[[1]]
-  VCV <- df %>% calculate_variance(prm, psi_hat_old)
-  
-  ste_vec <- sapply(1:(dim(VCV)[[1]]), 
-                    function(k){VCV[k,k] %>% sqrt()})
-  
-  psi_by_period <- sapply(1:9, 
-                          function(k){
-                            -psi_hat_old[[prm$beta_1_track[[k]]]]  
-                          })
-  ste_by_period <- sapply(1:9, 
-                          function(k){
-                            ste_vec[[prm$beta_1_track[[k]]]]  
-                          })
-  psi_col <- as.name(paste0("itr_", i))
-  ste_col <- as.name(paste0("itr_", i, "_ste"))
-  df_MA <- df_MA %>% add_column("{psi_col}" := psi_by_period,
-                                "{ste_col}" := ste_by_period)
-  
-  #nr_out_MA_list <- nr_out_MA_list %>% append(., list(psi_hat_old))
-}
-
-
-ggplot(df_MA, aes(x=period)) +
-  geom_point(aes(y=itr_0, size=4), color="red") +
-  geom_line(aes(y=itr_0), color="red") +
-  geom_errorbar(aes(ymin=itr_0-2*itr_0_ste, ymax=itr_0+2*itr_0_ste),
-                width=.2, position=position_dodge(0.05), color="red") + 
-  geom_point(aes(y=itr_1, size=4), color="darkred") +
-  geom_line(aes(y=itr_1), color="darkred") +
-  geom_errorbar(aes(ymin=itr_1-2*itr_1_ste, ymax=itr_1+2*itr_1_ste),
-                width=.2, position=position_dodge(0.05), color="darkred") + 
-  geom_point(aes(y=itr_2, size=4), color="blue") +
-  geom_line(aes(y=itr_2), color="blue") +
-  geom_errorbar(aes(ymin=itr_2-2*itr_2_ste, ymax=itr_2+2*itr_2_ste),
-                width=.2, position=position_dodge(0.05), color="blue") + 
-  geom_point(aes(y=itr_3, size=4), color="lightblue") +
-  geom_line(aes(y=itr_3), color="lightblue") +
-  geom_errorbar(aes(ymin=itr_3-2*itr_3_ste, ymax=itr_3+2*itr_3_ste),
-                width=.2, position=position_dodge(0.05), color="lightblue") + 
-  geom_point(aes(y=itr_4, size=4), color="green") + 
-  geom_line(aes(y=itr_4), color="green") +
-  geom_errorbar(aes(ymin=itr_4-2*itr_4_ste, ymax=itr_4+2*itr_4_ste),
-                width=.2, position=position_dodge(0.05), color="green")
 
 
 
@@ -717,116 +749,193 @@ ggplot(df_MA, aes(x=period)) +
 
 
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
-#         Lyle's block models (tm)
+#           C vs A           26
 #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   ##
+pk_max <- 23
+prm_26_full <- prm_base
+prm_26_full$t_a_vec <- c(seq(90, 90*26, 90))
+prm_26_full$beta_1_track <- c(1:pk_max, rep(pk_max+1, 26-pk_max))
+prm_26_full$beta_x_track <- rep(0, 26)
 
-#nr_out_MA_list <- list()
-df_Lyle_psis <- tibble(psi=1:5)
-df_Lyle_stes <- tibble(ste=1:5)
-for(i in 0:8){
-  
-  if(i == 0){
-    prm_25_full$beta_1_track <- c(rep(1,4), rep(2,4), rep(3,4), rep(4, 26-i-3*4))
-  } else {
-    prm_25_full$beta_1_track <- c(rep(1, i), rep(2,4), rep(3,4), rep(4,4), rep(5, 26-i-3*4))
-  }
-  
-  if(i == 0){ psi_start <- NA}
-  else {
-    psi_start <- psi_hat_old
-  }
-  
-  #nr_out <- df %>% newton_raphson_grad(prm=prm, tol=0.01,
-  #                                     psi_start_vec=psi_start,
-  #                                     print_results=T)
-  
-  
-  nr_out_piecewise <- df_cva_25_full %>% 
-    newton_raphson_piece(prm=prm_25_full)#, tol=0.01,
-  #psi_start_vec=psi_start,
-  #max_sub_iter = 20,
-  #print_results=T)
-  psi_hat <- nr_out_piecewise[[1]]
-  
-  VCV <- df %>% calculate_variance(prm, psi_hat)#, trt_models)
-  ste_vec <- sapply(1:(dim(VCV)[[1]]), 
-                    function(k){VCV[k,k] %>% sqrt()})
-  
-  
-  if(i == 0){
-    psi_hat <- c(psi_hat, NA)
-    #ste_vec <- c(ste_vec, NA)
-  }  
-  
-  psi_col <- as.name(paste0("itr_", i))
-  
-  df_Lyle_psis <- df_Lyle_psis %>% add_column("{psi_col}" := psi_hat)
-  # df_Lyle_stes <- df_Lyle_stes %>% add_column("{psi_col}" := ste_vec)
-  
-  psi_hat_old <- psi_hat
-}
+final_time <- prm_26_full$t_a_vec[length(prm_26_full$t_a_vec)] + 90
+
+df_cva_26 <- df_cva %>% #filter(firstdate < prm_26$censor_date) %>%
+  filter(!(censordate < prm_26_full$censor_date) | (is.na(censordate))) %>%
+  mutate(C_i = as.integer(difftime(prm_26_full$censor_date, firstdate,  "days"))) %>%
+  mutate(C_i = pmin(C_i, final_time )) %>%
+  mutate(ti = pmin(ti, C_i),
+         iscensored = ifelse(ti==C_i, 1, 0))
+
+prm_26_full$censor_max <- df_cva_26 %>% select(C_i) %>% max()
 
 
 
-df_lyle <- tibble(period=0:25)
-df_lye_stes <- tibble(period=0:25)
-matrix_lyle_stes <- df_Lyle_stes %>% as.matrix()
-matrix_lyle <- df_Lyle_psis %>% as.matrix()
-for(i in 0:8){
-  if(i == 0){
-    prm$beta_1_track <- c(rep(1,4), rep(2,4), rep(3,4), rep(4, 26-i-3*4))
-  } else {
-    prm$beta_1_track <- c(rep(1, i), rep(2,4), rep(3,4), rep(4,4), rep(5, 26-i-3*4))
-  }
-  #prm$beta_1_track <- c(rep(1, i), rep(2,4), rep(3,4), rep(4,4), rep(5, 26-i-3*4))
-  psi_hat <- matrix_lyle[1:5, i+2]
-  ste_hat <- matrix_lyle_stes[1:5, i+2]
-  
-  psi_by_period <- sapply(1:26, 
-                          function(k){
-                            return(-psi_hat[prm$beta_1_track[[k]]])
-                          })
-  ste_by_period <- sapply(1:26, 
-                          function(k){
-                            return(ste_hat[prm$beta_1_track[[k]]])
-                          })
-  psi_col <- as.name(paste0("itr_", i))
-  df_lyle <- df_lyle %>% add_column("{psi_col}" := psi_by_period)
-  df_lye_stes <- df_lye_stes %>% add_column("{psi_col}" := ste_by_period)
-}
 
-matrix_lyle_by_period <- df_lyle %>% select(-c(period)) %>% as.matrix()
+#Full treatment model
+# 
+prm_26_full$trt_mod_list_full <- lapply(0:(26-1), function(k) {
+  mdl_k <- c("1", "age", "sex", "race", "smoke", #"firstyear",
+             "sercreat", "latereferral", "cad", "lung", "pvd",
+             "diabetes", "bmi_cat", "primary"
+  )
+  return(mdl_k)
+})
 
-MA_design <- c(rep(1,1), rep(0,8), #1
-               rep(1,2), rep(0,7),
-               rep(1,3), rep(0,6),
-               rep(1,4), rep(0,5),
-               rep(1/2,1), rep(1,3), rep(1/2,1), rep(0,4), #5
-               rep(1/2,2), rep(1,2), rep(1/2,2), rep(0,3),
-               rep(1/2,3), rep(1,1), rep(1/2,3), rep(0,2),
-               rep(1/2,4), rep(0,0), rep(1/2,4), rep(0,1),
-               rep(1/3,1), rep(1/2,3), rep(1/3), rep(1/2, 3), rep(1/3,1),
-               rep(1/3,1), rep(1/2,3), rep(1/3), rep(1/2, 3), rep(1/3,1), #10
-               rep(1/3,1), rep(1/2,3), rep(1/3), rep(1/2, 3), rep(1/3,1),
-               rep(1/3,1), rep(1/2,3), rep(1/3), rep(1/2, 3), rep(1/3,1),
-               rep(0,1), rep(1/2,8),
-               rep(0,2), rep(1/2,3), rep(1,1), rep(1/2,3),
-               rep(0,3), rep(1/2,2), rep(1,2), rep(1/2,2), #15
-               rep(0,4), rep(1/2,1), rep(1,3), rep(1/2,1),
-               rep(0,5), rep(1,4),
-               rep(0,6), rep(1,3),
-               rep(0,7), rep(1,2), 
-               rep(0,8), rep(1,1)) %>% matrix(ncol=9, byrow=T) %>% t()
 
-MA_converter <- sapply(1:20, function(k){MA_design[,k] / (sum(MA_design[,k]))})
+fit_trt_out <- df_cva_26 %>% fit_treatment_models(prm=prm_26_full)
+df_cva_26_full <- fit_trt_out[[1]]
+prm_26_full$trt_models <- fit_trt_out[[2]]
 
-psi_MA_smoothed <- sapply(1:dim(MA_converter)[[2]],
-                          function(k){
-                            return(matrix_lyle_by_period[k,]%*%MA_converter[,k])
-                          })
 
-df_lyle_2 %>% pivot_longer(cols = !period) %>% 
-  ggplot(aes(x=period, y=value, group=name)) +
-  geom_point() + geom_line()
+nr_out_26 <- df_cva_26_full %>%
+  newton_raphson_piece(prm=prm_26_full,
+                       psi_max = 4,
+                       max_iter=200)
 
+psi_hat_vec_26 <- nr_out_26[[1]]
+psi_hat_vec <- psi_hat_vec_26
+
+VCV <- df_cva_26_full %>% calculate_variance(prm=prm_26_full,
+                                             psi_hat_vec=psi_hat_vec)
+ste <- sapply(1:dim(VCV)[[1]],
+              function(k){
+                return(sqrt(VCV[k,k]))
+              })
+var_vec <- ste^2
+
+tibble(psi=psi_hat_vec, ste=ste, VCV=ste^2)
+tibble_cva <- tibble(psi=psi_hat_vec, ste=ste, VCV=ste^2)
+
+df_psi_26 <- lapply(1:(prm_26_full$beta_1_track %>% length()),
+                    function(k){
+                      beta_value <- prm_26_full$beta_1_track[k]
+                      psi_now <- psi_hat_vec_26[beta_value]
+                      ste_now <- ste[beta_value]
+                      
+                      tibble(period=((k-1) %>% as.integer()), psi=psi_now, ste=ste_now, epsi=exp(psi))
+                    }) %>% Reduce(rbind, .)
+
+# df_psi_26 %>% mutate(psi = psi, epsi=exp(psi)) #%>%  xtable(digts=0) %>% print(include.rownames=F, 
+                         # format.args = list(big.mark = ","))
+
+# INVERSE VARIANCE WEIGHTED AVERAGING
+
+ivw_3 <- lapply(1:26,
+                   function(j){
+                     if(j==1){
+                       items <- c(1,2)
+                     } else if (j==pk_max+1) {
+                       items <- c(pk_max, pk_max+1)
+                     } else if (j > pk_max+1){
+                       items <- c(pk_max+1)
+                     } else {
+                       items <- (j-1):(j+1)
+                     }
+                     weights <- var_vec[items]
+                     psi_hat_part <- psi_hat_vec[items]
+                     
+                     psi_avg <- sum(psi_hat_part/weights)/(sum(1/weights))
+                     var_avg <- mean(weights)
+
+                     return(tibble(period=j, psi_avg=psi_avg, var_avg=var_avg, ste=sqrt(var_avg)))
+                   })
+
+df_ivw_3 <- lapply(1:(prm_26_full$beta_1_track %>% length()),
+                 function(k){
+                   psi_now <- ivw_3[[k]]$psi_avg
+                   ste_now <- ivw_3[[k]]$var_avg %>% sqrt()
+                   tibble(period=k-1, psi_ivw3=psi_now, ste_ivw3=ste_now)
+                 }) %>% Reduce(rbind, .)
+
+ivw_5 <- lapply(1:26,
+                   function(j){
+                     if(j==1){
+                       items <- 1:3
+                     } else if(j==2) {
+                       items <- 1:4
+                     } else if (j==pk_max) {
+                       items <- c((pk_max-2):(pk_max), rep(pk_max+1, 2))
+                     } else if (j==pk_max+1){
+                       items <- c(pk_max-1, pk_max, rep(pk_max+1, 3))
+                     } else if (j==pk_max+2){
+                       items <- c(pk_max, rep(pk_max+1, 4))
+                     } else if (j > pk_max+2){
+                       items <- c(pk_max+1)
+                     } else {
+                       items <- (j-2):(j+2)
+                     }
+                     weights <- var_vec[items]
+                     psi_hat_part <- psi_hat_vec[items]
+                     
+                     psi_avg <- sum(psi_hat_part/weights)/(sum(1/weights))
+                     var_avg <- mean(weights)
+
+                     return(tibble(period=j, psi_avg=psi_avg, var_avg=var_avg, ste=sqrt(var_avg)))
+                   })# %>% Reduce(rbind, .)
+
+df_ivw_5 <- lapply(1:(prm_26_full$beta_1_track %>% length()),
+                 function(k){
+                   psi_now <- ivw_5[[k]]$psi_avg
+                   var_now <- ivw_5[[k]]$var_avg
+                   ste_now <- var_now %>% sqrt()
+                   tibble(period=k-1, psi_ivw5=psi_now, ste_ivw5=ste_now)
+                 }) %>% Reduce(rbind, .)
+
+
+
+
+df_psi_all <- df_psi_26 %>% left_join(df_ivw_3, by="period") %>% left_join(df_ivw_5, by="period") %>%
+  mutate(period=as.integer(period))
+
+df_psi_all %>%
+  xtable(digts=0) %>% print(include.rownames=F, 
+                         format.args = list(big.mark = ","))
+
+
+
+
+y_lim_low <- -3.5
+y_lim_high <- 3.5
+p_plot_max <- 26
+
+# df_psi_all %>%
+#   ggplot(aes(x=period)) + 
+#   geom_point(aes(y=psi), size = 2) +
+#   geom_errorbar(aes(ymin=psi-2*ste, ymax=psi+2*ste),
+#                 width=.3, linewidth=0.9) + #, position=position_dodge(0.05)) +
+#   ylim(-10, 5) + 
+#   ylab("psi") + theme_bw() +
+#   geom_hline(yintercept=0, linetype="dashed", color="blue")
+
+
+df_psi_all %>% filter(period <= p_plot_max) %>%
+  ggplot(aes(x=period, y=psi)) + 
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin=psi-2*ste, ymax=psi+2*ste),
+                width=.3, linewidth=0.9,
+                position=position_dodge(0.05)) + #, position=position_dodge(0.05)) +
+  ylim(y_lim_low, y_lim_high) + 
+  ylab("psi") + theme_bw() +
+  geom_hline(yintercept=0, linetype="dashed", color="blue")
+
+df_psi_all %>% filter(period <= p_plot_max) %>%
+        ggplot(aes(x=period, y=psi_ivw3)) +
+        geom_point(size = 2) +
+        geom_errorbar(aes(ymin=psi_ivw3-2*ste_ivw3, ymax=psi_ivw3+2*ste_ivw3),
+                      width=.2, linewidth=0.9,
+                      position=position_dodge(0.05)) +
+        ylim(y_lim_low, y_lim_high) + theme_bw() +
+        geom_hline(yintercept=0, linetype="dashed", color="blue") +
+        ylab("IVW3")
+
+
+df_psi_all %>% filter(period <= p_plot_max) %>%
+  ggplot(aes(x=period, y=psi_ivw5)) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin=psi_ivw5-2*ste_ivw5, ymax=psi_ivw5+2*ste_ivw5),
+                width=.2, linewidth=0.9,
+                position=position_dodge(0.05)) +
+  ylim(y_lim_low, y_lim_high) + theme_bw() +
+  geom_hline(yintercept=0, linetype="dashed", color="blue") +
+  ylab("IVW5")
 

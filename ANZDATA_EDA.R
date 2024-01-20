@@ -59,6 +59,7 @@ df_all %>%
          !is.na(vacategory90)) %>%
           distinct(id, .keep_all=T) %>% nrow
 
+
 df_all %>% 
   filter(totaldialdur > 90,
          !is.na(bmi),
@@ -67,11 +68,13 @@ df_all %>%
          !is.na(sercreat),
          !is.na(rxhomeva),
          !is.na(rxhomeday90),
-         !is.na(vacategory90),
-         censorind==0) %>%
+         !is.na(vacategory90)) %>%
+          rename(t0 = "_t0", t="_t", 
+                 smoke=cig, 
+                 latereferral=referral3) %>%
+          filter(!latereferral=="") %>%
+          filter(smoke!=4) %>%
   distinct(id, .keep_all=T) %>% nrow
-
-
 
 
 
