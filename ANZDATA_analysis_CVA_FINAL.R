@@ -20,7 +20,7 @@ library(labelled)
 library(DescTools)
 library(cowplot)
 library(xtable)
-
+library(MASS, exclude=c("select"))
 source("G-estimation_FINAL.R")
 
 
@@ -259,7 +259,7 @@ df_CVC_vs_AVFG_long <- df_90_filtered %>%
   
   # this is AVFG home vs facility
   # mutate(ai = ifelse(ai_finest %in% c(0,1,2), 1, 0))
-
+ 
 df_cva <- df_CVC_vs_AVFG_long %>% 
   select(c(id, period, ti, dies, ai)) %>%
   pivot_wider(names_from = period,
@@ -289,6 +289,7 @@ df_reduced %>%
   group_by(rxhomeva) %>%
   summarise(time_count=sum(totaltime)) #%>%
   # select(time_count) %>% sum
+
 
 #Count of time spent on AVF/AVG/CVC facility only after filtering
 df_split %>%
@@ -352,10 +353,10 @@ period_stats <- lapply(-1:32, function(k){
 period_stats %>% xtable(digts=0) %>% print(include.rownames=F, 
                          format.args = list(big.mark = ","))
 
-period_stats %>% select(k, deaths) %>% filter(k >= 0) %>%
-  ggplot(aes(x=k, y=deaths)) +
-  geom_point() + geom_smooth(method="lm", formula = (y ~ log(x+1)), se=F) +
-  xlab("Period") + ylab("Deaths per period")
+period_stats %>% select(k, n, deaths) %>% filter(k >= 0) %>%
+  ggplot(aes(x=k, y=(deaths/n)*100)) +
+  geom_point() + geom_smooth(method="lm", formula = (y ~ 1 + x + x^2), se=F) +
+  xlab("Period") + ylab("% Deaths") + theme_bw()
 
 
 
@@ -788,7 +789,7 @@ prm_26_full$trt_models <- fit_trt_out[[2]]
 
 
 nr_out_26 <- df_cva_26_full %>%
-  newton_raphson_piece(prm=prm_26_full,
+  newton_raphson_grad_large(prm=prm_26_full,
                        psi_max = 4,
                        max_iter=200)
 
@@ -797,10 +798,18 @@ psi_hat_vec <- psi_hat_vec_26
 
 VCV <- df_cva_26_full %>% calculate_variance(prm=prm_26_full,
                                              psi_hat_vec=psi_hat_vec)
+VCV_alt <- df_cva_26_full %>% calculate_variance_alt(prm=prm_26_full,
+                                             psi_hat_vec=psi_hat_vec)
+
+
 ste <- sapply(1:dim(VCV)[[1]],
               function(k){
                 return(sqrt(VCV[k,k]))
               })
+ste_alt <- sapply(1:dim(VCV_alt)[[1]],
+              function(k){
+                return(sqrt(VCV_alt[k,k]))
+})
 var_vec <- ste^2
 
 tibble(psi=psi_hat_vec, ste=ste, VCV=ste^2)
@@ -884,7 +893,9 @@ df_ivw_5 <- lapply(1:(prm_26_full$beta_1_track %>% length()),
 
 
 
-df_psi_all <- df_psi_26 %>% left_join(df_ivw_3, by="period") %>% left_join(df_ivw_5, by="period") %>%
+df_psi_all <- df_psi_26 %>% 
+  left_join(df_ivw_3, by="period") %>%
+  left_join(df_ivw_5, by="period") %>%
   mutate(period=as.integer(period))
 
 df_psi_all %>%
@@ -894,19 +905,9 @@ df_psi_all %>%
 
 
 
-y_lim_low <- -3.5
-y_lim_high <- 3.5
+y_lim_low <- -4
+y_lim_high <- 4
 p_plot_max <- 26
-
-# df_psi_all %>%
-#   ggplot(aes(x=period)) + 
-#   geom_point(aes(y=psi), size = 2) +
-#   geom_errorbar(aes(ymin=psi-2*ste, ymax=psi+2*ste),
-#                 width=.3, linewidth=0.9) + #, position=position_dodge(0.05)) +
-#   ylim(-10, 5) + 
-#   ylab("psi") + theme_bw() +
-#   geom_hline(yintercept=0, linetype="dashed", color="blue")
-
 
 df_psi_all %>% filter(period <= p_plot_max) %>%
   ggplot(aes(x=period, y=psi)) + 
@@ -922,7 +923,7 @@ df_psi_all %>% filter(period <= p_plot_max) %>%
         ggplot(aes(x=period, y=psi_ivw3)) +
         geom_point(size = 2) +
         geom_errorbar(aes(ymin=psi_ivw3-2*ste_ivw3, ymax=psi_ivw3+2*ste_ivw3),
-                      width=.2, linewidth=0.9,
+                      width=.3, linewidth=0.9,
                       position=position_dodge(0.05)) +
         ylim(y_lim_low, y_lim_high) + theme_bw() +
         geom_hline(yintercept=0, linetype="dashed", color="blue") +
@@ -933,9 +934,38 @@ df_psi_all %>% filter(period <= p_plot_max) %>%
   ggplot(aes(x=period, y=psi_ivw5)) +
   geom_point(size = 2) +
   geom_errorbar(aes(ymin=psi_ivw5-2*ste_ivw5, ymax=psi_ivw5+2*ste_ivw5),
-                width=.2, linewidth=0.9,
+                width=.3, linewidth=0.9,
                 position=position_dodge(0.05)) +
   ylim(y_lim_low, y_lim_high) + theme_bw() +
   geom_hline(yintercept=0, linetype="dashed", color="blue") +
   ylab("IVW5")
 
+
+w <- function(period){
+ if(period < 7){
+    x <- period/7
+    return((1-x)*4.1 + x*2)
+ } else if (period < 15){
+    return(2)
+ } else {
+    x <- (period-15)/10
+    return((1-x)*2 + x*1.6)
+ }
+}
+df_compare %>% ggplot(aes(x=period)) + 
+  geom_line(aes(y=epsi)) +
+  geom_point(aes(y=epsi))+
+  geom_line(aes(y=kasza)) +
+  geom_point(aes(y=kasza))
+
+
+df_compare %>% select(period, psi_ivw5, kasza) %>%
+    mutate(epsi=exp(psi_ivw5)) %>%
+    rename("exp(IVW5)"=epsi,
+           "HR"=kasza) %>%
+    select(-c(psi_ivw5)) %>%
+    pivot_longer(!period, names_to="model") %>%
+    ggplot(aes(x=period, y=value, color=model)) +
+    geom_point() + geom_line() +
+    ylab("hazard ratio / acceleration factor") +
+    ylim(0,6) + theme_bw()
